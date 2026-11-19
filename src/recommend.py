@@ -18,7 +18,8 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
-from src.calibrate import apply_platt_scaler, assign_confidence, fit_platt_scaler
+from src.calibrate import apply_platt_scaler, assign_confidence, fit_platt_scaler, tune_decision_threshold
+from src.cutoff import apply_cutoff_and_targets, apply_eval_filter
 from src.features import build_all_features
 from src.load import load_config, load_parquet, load_raw_cdms, save_parquet
 
@@ -237,12 +238,23 @@ def export_production_dashboard_files(
     """
     cfg = load_config()
     high_thresh = float(cfg["thresholds"]["high_risk_log10"])
-    decision_th = 0.0300  # Tuned in Phase 7 for optimal F2
 
     calibrated_oof = load_parquet("data/processed/calibrated_oof.parquet")
     features_train = load_parquet("data/processed/features_train.parquet")
     targets_train = load_parquet("data/processed/targets_train.parquet")
     raw_train = load_raw_cdms("data/raw", "train")
+
+    # Tune decision threshold dynamically on filtered OOF calibrated probabilities
+    cal_eval = calibrated_oof.merge(
+        targets_train[["event_id", "final_time_to_tca", "pre_cutoff_cdm_count"]],
+        on="event_id",
+    )
+    eval_mask = apply_eval_filter(cal_eval, cfg)
+    decision_th, _ = tune_decision_threshold(
+        cal_eval.loc[eval_mask, "y_high_risk"].values,
+        cal_eval.loc[eval_mask, "calibrated_prob"].values,
+        beta=2.0,
+    )
 
     # Map object_type and mission_id from latest CDMs in raw_train
     raw_sorted = raw_train.sort_values(["event_id", "time_to_tca"], ascending=[True, False])
@@ -264,7 +276,8 @@ def export_production_dashboard_files(
     train_val_df["cdm_count_pre_cutoff"] = train_val_df["cdm_count_pre_cutoff"].fillna(1).astype(int)
 
     oof_preds = load_parquet("data/processed/oof_predictions.parquet")
-    train_val_df["pred_final_log_risk"] = oof_preds["lgbm_direct_pred_risk"].round(4)
+    reg_col = "lgbm_conditional_pred_risk" if "lgbm_conditional_pred_risk" in oof_preds.columns else "lgbm_direct_pred_risk"
+    train_val_df["pred_final_log_risk"] = oof_preds[reg_col].round(4)
     train_val_df["high_risk_prob"] = train_val_df["calibrated_prob"].round(4)
     train_val_df["recommendation"] = np.where(train_val_df["high_risk_prob"] >= decision_th, "MANOEUVRE", "NO_MANOEUVRE")
     train_val_df["confidence"] = assign_confidence(train_val_df["high_risk_prob"], decision_th, cfg)
@@ -282,14 +295,31 @@ def export_production_dashboard_files(
 
     test_features = build_all_features(test_cdms, include_physics=True)
 
-    # Fit champion Random Forest on full training set
+    # Fit champion Random Forest on full training set (with multi-cutoff augmentation if configured)
     from src.models import _get_feature_cols
     feat_cols = _get_feature_cols(features_train)
-    X_train = features_train[feat_cols]
-    y_train = targets_train["y_high_risk"].values
+    X_train_full = features_train[feat_cols].copy()
+    y_train_full = targets_train["y_high_risk"].values
 
-    pos_cnt = int(np.sum(y_train == 1))
-    neg_cnt = int(np.sum(y_train == 0))
+    cutoff_days = float(cfg["data"].get("cutoff_days", 2.0))
+    train_cutoffs = [float(c) for c in cfg["data"].get("train_cutoffs", [cutoff_days])]
+    extra_cutoffs = [c for c in train_cutoffs if abs(c - cutoff_days) > 1e-6]
+    if extra_cutoffs:
+        op_thresh = float(cfg["thresholds"].get("operational_risk_log10", -4.0))
+        train_eids = set(features_train["event_id"].values)
+        raw_train_sub = raw_train[raw_train["event_id"].isin(train_eids)]
+        aug_X_parts, aug_y_parts = [X_train_full], [y_train_full]
+        for c in extra_cutoffs:
+            vis_c, tgt_c, _ = apply_cutoff_and_targets(raw_train_sub, c, high_thresh, op_thresh)
+            feat_c = build_all_features(vis_c, include_physics=True)
+            m_c = feat_c.merge(tgt_c[["event_id", "y_high_risk"]], on="event_id")
+            aug_X_parts.append(m_c[feat_cols])
+            aug_y_parts.append(m_c["y_high_risk"].values)
+        X_train_clf = pd.concat(aug_X_parts, axis=0, ignore_index=True)
+        y_train_clf = np.concatenate(aug_y_parts)
+    else:
+        X_train_clf = X_train_full
+        y_train_clf = y_train_full
 
     rf_prod = RandomForestClassifier(
         n_estimators=120,
@@ -298,7 +328,7 @@ def export_production_dashboard_files(
         random_state=int(cfg["project"]["random_seed"]),
         n_jobs=-1,
     )
-    rf_prod.fit(X_train, y_train)
+    rf_prod.fit(X_train_clf, y_train_clf)
 
     # Platt calibrator
     scaler_prod = fit_platt_scaler(calibrated_oof["raw_prob"].values, calibrated_oof["y_high_risk"].values)
@@ -307,9 +337,26 @@ def export_production_dashboard_files(
     raw_test_scores = rf_prod.predict_proba(X_test)[:, 1]
     cal_test_probs = apply_platt_scaler(scaler_prod, raw_test_scores)
 
-    # Direct regressor on test
-    from lightgbm import LGBMRegressor
-    lgb_reg = LGBMRegressor(
+    # Two-stage conditional regressor on test (separates -30.0 floor from active risk)
+    from lightgbm import LGBMClassifier, LGBMRegressor
+    y_risk_train = targets_train["y_risk"].values
+    floor_val = -30.0
+    nonfloor_mask = y_risk_train > (floor_val + 1e-6)
+    stage1_clf = LGBMClassifier(
+        n_estimators=100,
+        learning_rate=0.05,
+        max_depth=5,
+        random_state=int(cfg["project"]["random_seed"]),
+        n_jobs=-1,
+        verbose=-1,
+    )
+    stage1_clf.fit(X_train_full, nonfloor_mask.astype(int))
+    p_nonfloor_test = stage1_clf.predict_proba(X_test)[:, 1]
+
+    X_nf = X_train_full[nonfloor_mask]
+    y_nf = y_risk_train[nonfloor_mask]
+    sw_nf = np.where(y_nf >= high_thresh, 5.0, 1.0)
+    stage2_reg = LGBMRegressor(
         n_estimators=120,
         learning_rate=0.05,
         max_depth=5,
@@ -317,8 +364,9 @@ def export_production_dashboard_files(
         n_jobs=-1,
         verbose=-1,
     )
-    lgb_reg.fit(X_train, targets_train["y_risk"].values)
-    pred_test_risk = lgb_reg.predict(X_test)
+    stage2_reg.fit(X_nf, y_nf, sample_weight=sw_nf)
+    y_nf_test = np.clip(stage2_reg.predict(X_test), floor_val, 0.0)
+    pred_test_risk = p_nonfloor_test * y_nf_test + (1.0 - p_nonfloor_test) * floor_val
 
     # Test metadata
     test_last_cdm = test_cdms.sort_values(["event_id", "time_to_tca"], ascending=[True, False]).groupby("event_id").last().reset_index()

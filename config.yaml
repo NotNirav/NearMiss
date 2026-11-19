@@ -6,7 +6,7 @@ data:
   raw_dir: data/raw
   processed_dir: data/processed
   cutoff_days: 2.0
-  train_cutoffs: [2.0]            # optional augmentation, see Phase 6: [2.0, 3.0, 4.0]
+  train_cutoffs: [2.0, 3.0, 4.0]  # multi-cutoff augmentation (Phase 6)
 
 eval_filter:                      # applied to validation and test results
   min_pre_cutoff_cdms: 1

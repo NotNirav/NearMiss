@@ -236,7 +236,11 @@ def fit_predict_regressors(
     models_dict = {
         "lgbm_direct": {"oof_pred_risk": np.zeros(len(train_folds)), "models": []},
         "lgbm_residual": {"oof_pred_risk": np.zeros(len(train_folds)), "models": []},
+        "lgbm_conditional": {"oof_pred_risk": np.zeros(len(train_folds)), "models": []},
     }
+
+    high_thresh = float(cfg.get("thresholds", {}).get("high_risk_log10", -6.0))
+    floor_val = -30.0
 
     for fold_i in range(n_splits):
         val_idx = np.where(train_folds["fold"].values == fold_i)[0]
@@ -244,6 +248,7 @@ def fit_predict_regressors(
 
         X_train = X_mat.iloc[trn_idx]
         X_val = X_mat.iloc[val_idx]
+        y_trn = y_val_vec[trn_idx]
 
         # 1. Direct Regressor
         direct_model = LGBMRegressor(
@@ -254,7 +259,7 @@ def fit_predict_regressors(
             n_jobs=-1,
             verbose=-1,
         )
-        direct_model.fit(X_train, y_val_vec[trn_idx])
+        direct_model.fit(X_train, y_trn)
         models_dict["lgbm_direct"]["models"].append(direct_model)
         models_dict["lgbm_direct"]["oof_pred_risk"][val_idx] = direct_model.predict(
             X_val
@@ -276,11 +281,147 @@ def fit_predict_regressors(
             compute_residual_predictions(latest_vec[val_idx], pred_delta)
         )
 
+        # 3. Two-Stage Conditional (Hurdle) Regressor: separates -30.0 floor from active risk
+        nonfloor_mask = y_trn > (floor_val + 1e-6)
+        nonfloor_y = nonfloor_mask.astype(int)
+        if len(np.unique(nonfloor_y)) >= 2:
+            stage1_clf = LGBMClassifier(
+                n_estimators=100,
+                learning_rate=0.05,
+                max_depth=5,
+                random_state=random_seed + fold_i,
+                n_jobs=-1,
+                verbose=-1,
+            )
+            stage1_clf.fit(X_train, nonfloor_y)
+            p_nonfloor = stage1_clf.predict_proba(X_val)[:, 1]
+        else:
+            stage1_clf = None
+            p_nonfloor = np.full(len(X_val), float(nonfloor_y[0]) if len(nonfloor_y) > 0 else 1.0)
+
+        X_nf = X_train[nonfloor_mask]
+        y_nf = y_trn[nonfloor_mask]
+        if len(X_nf) == 0:
+            X_nf = X_train
+            y_nf = y_trn
+        # Emphasize high-risk tail inside non-floor regression
+        sw_nf = np.where(y_nf >= high_thresh, 5.0, 1.0)
+        stage2_reg = LGBMRegressor(
+            n_estimators=120,
+            learning_rate=0.05,
+            max_depth=5,
+            random_state=random_seed + fold_i,
+            n_jobs=-1,
+            verbose=-1,
+        )
+        stage2_reg.fit(X_nf, y_nf, sample_weight=sw_nf)
+        y_nf_pred = np.clip(stage2_reg.predict(X_val), floor_val, 0.0)
+        models_dict["lgbm_conditional"]["models"].append((stage1_clf, stage2_reg))
+        models_dict["lgbm_conditional"]["oof_pred_risk"][val_idx] = (
+            p_nonfloor * y_nf_pred + (1.0 - p_nonfloor) * floor_val
+        )
+
     result = {}
     for name, data in models_dict.items():
         result[name] = {
             "oof_pred_risk": pd.Series(
                 data["oof_pred_risk"], index=train_folds.index, name=f"{name}_oof"
+            ),
+            "models": data["models"],
+        }
+    return result
+
+
+def fit_predict_classifiers_augmented(
+    X_base: pd.DataFrame,
+    y_base: pd.Series,
+    folds_df: pd.DataFrame,
+    X_aug: pd.DataFrame,
+    y_aug: pd.Series,
+    cfg: dict[str, Any],
+    imbalance_strategy: str = "weighted",
+) -> dict[str, dict[str, Any]]:
+    """Train classifiers with multi-cutoff augmentation strictly inside each training fold.
+
+    Validation predictions are evaluated exclusively on X_base (the primary 2.0-day cutoff).
+    Augmented rows from X_aug (e.g. 3.0 and 4.0 day cutoffs) are added to fold training
+    data ONLY for event_ids belonging to that fold's training split (Section 12 Rule 2).
+    """
+    random_seed = int(cfg.get("project", {}).get("random_seed", 42))
+    n_splits = int(cfg.get("validation", {}).get("n_splits", 5))
+
+    feat_cols = _get_feature_cols(X_base)
+    X_base_mat = X_base[feat_cols].copy()
+    y_base_vec = np.asarray(y_base, dtype=int)
+
+    X_aug_mat = X_aug[feat_cols].copy()
+    y_aug_vec = np.asarray(y_aug, dtype=int)
+    aug_eids = X_aug["event_id"].values
+
+    train_mask = folds_df["split"] == "train" if "split" in folds_df.columns else np.ones(len(folds_df), dtype=bool)
+    train_folds = folds_df[train_mask].copy()
+    base_eids = train_folds["event_id"].values
+
+    models_dict = {
+        "logreg": {"oof_scores": np.zeros(len(train_folds)), "models": []},
+        "rf": {"oof_scores": np.zeros(len(train_folds)), "models": []},
+        "lgbm": {"oof_scores": np.zeros(len(train_folds)), "models": []},
+    }
+
+    for fold_i in range(n_splits):
+        val_idx = np.where(train_folds["fold"].values == fold_i)[0]
+        trn_idx = np.where(train_folds["fold"].values != fold_i)[0]
+        trn_eid_set = set(base_eids[trn_idx])
+
+        aug_trn_mask = np.isin(aug_eids, list(trn_eid_set))
+        X_train = pd.concat([X_base_mat.iloc[trn_idx], X_aug_mat[aug_trn_mask]], axis=0, ignore_index=True)
+        y_train = np.concatenate([y_base_vec[trn_idx], y_aug_vec[aug_trn_mask]])
+        X_val = X_base_mat.iloc[val_idx]
+
+        pos_count = int(np.sum(y_train == 1))
+        neg_count = int(np.sum(y_train == 0))
+        pos_weight = float(neg_count / max(1, pos_count))
+
+        lr_class_weight = "balanced" if imbalance_strategy == "weighted" else None
+        lr_pipeline = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(class_weight=lr_class_weight, random_state=random_seed + fold_i, max_iter=1000, C=0.1)),
+        ])
+        lr_pipeline.fit(X_train, y_train)
+        models_dict["logreg"]["models"].append(lr_pipeline)
+        models_dict["logreg"]["oof_scores"][val_idx] = lr_pipeline.predict_proba(X_val)[:, 1]
+
+        rf_class_weight = "balanced_subsample" if imbalance_strategy == "weighted" else None
+        rf_model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=8,
+            class_weight=rf_class_weight,
+            random_state=random_seed + fold_i,
+            n_jobs=-1,
+        )
+        rf_model.fit(X_train, y_train)
+        models_dict["rf"]["models"].append(rf_model)
+        models_dict["rf"]["oof_scores"][val_idx] = rf_model.predict_proba(X_val)[:, 1]
+
+        lgb_spw = pos_weight if imbalance_strategy == "weighted" else 1.0
+        lgb_model = LGBMClassifier(
+            n_estimators=120,
+            learning_rate=0.05,
+            max_depth=5,
+            scale_pos_weight=lgb_spw,
+            random_state=random_seed + fold_i,
+            n_jobs=-1,
+            verbose=-1,
+        )
+        lgb_model.fit(X_train, y_train)
+        models_dict["lgbm"]["models"].append(lgb_model)
+        models_dict["lgbm"]["oof_scores"][val_idx] = lgb_model.predict_proba(X_val)[:, 1]
+
+    result = {}
+    for name, data in models_dict.items():
+        result[name] = {
+            "oof_scores": pd.Series(
+                data["oof_scores"], index=train_folds.index, name=f"{name}_aug_oof"
             ),
             "models": data["models"],
         }

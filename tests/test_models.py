@@ -10,6 +10,7 @@ from src.load import load_config
 from src.models import (
     compute_residual_predictions,
     fit_predict_classifiers,
+    fit_predict_classifiers_augmented,
     fit_predict_regressors,
     predict_baseline_a,
 )
@@ -63,11 +64,33 @@ def test_classifiers_and_regressors_cv(
         assert (oof >= 0.0).all() and (oof <= 1.0).all()
         assert len(clf_res[name]["models"]) == 5
 
-    # 2. Regressors (direct and residual)
+    # 2. Regressors (direct, residual, and conditional)
     reg_res = fit_predict_regressors(X, y_risk, X["latest_log_risk"], folds_df, cfg)
-    for name in ("lgbm_direct", "lgbm_residual"):
+    for name in ("lgbm_direct", "lgbm_residual", "lgbm_conditional"):
         assert name in reg_res
         oof_r = reg_res[name]["oof_pred_risk"]
         assert len(oof_r) == len(X)
         assert not np.isnan(oof_r).any()
         assert len(reg_res[name]["models"]) == 5
+
+
+def test_augmented_classifiers_cv_and_group_isolation(
+    dummy_train_setup: tuple[pd.DataFrame, pd.Series, pd.Series, pd.DataFrame],
+) -> None:
+    X, y_high, _, folds_df = dummy_train_setup
+    cfg = load_config()
+
+    # Augmented rows from earlier cutoffs sharing the same event_ids
+    X_aug = X.copy()
+    X_aug["feat_1"] = X_aug["feat_1"] + 0.1
+    y_aug = y_high.copy()
+
+    res = fit_predict_classifiers_augmented(
+        X, y_high, folds_df, X_aug, y_aug, cfg, imbalance_strategy="weighted"
+    )
+    for name in ("logreg", "rf", "lgbm"):
+        assert name in res
+        oof = res[name]["oof_scores"]
+        assert len(oof) == len(X)
+        assert (oof >= 0.0).all() and (oof <= 1.0).all()
+        assert len(res[name]["models"]) == 5

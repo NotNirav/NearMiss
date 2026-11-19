@@ -105,21 +105,21 @@ No test labels or test event IDs were visible during hyperparameter selection, t
 | :--- | :--- | :--- | :--- |
 | **Total Test Events** | 2,167 | 2,167 | 100% evaluated |
 | **Actual High-Risk Conjunctions** | 150 | 150 | Positive rate: 6.92% |
-| **Missed Dangerous Events (FN)** | 35 | 36 | Critical safety misses |
-| **Unnecessary Manoeuvres (FP)** | 63 | 64 | Avoidable propellant expenditure |
-| **True Positives (TP)** | 115 | 114 | Successfully caught encounters |
-| **True Negatives (TN)** | 1,954 | 1,953 | Safely cleared conjunctions |
-| **Recall (Sensitivity)** | **76.67%** | **76.00%** | Maintained high collision detection |
-| **Precision** | **64.61%** | **64.04%** | True positive precision |
-| **F2 Score ($\beta = 2.0$)** | **0.7391** | **0.7326** | Strong balanced performance |
-| **PR-AUC** | **0.6651** | **0.6164** | Precision-Recall curve area |
-| **High-Risk MSE ($y \ge -6.0$)** | 26.6429 | 156.4239 | Log10 squared error on high-risk events |
-| **Kelvins Official Score** | 36.0491 | 213.5049 | $\text{MSE}_{\text{high}} / F_2$ (lower is better) |
+| **Missed Dangerous Events (FN)** | 35 | 43 | Critical safety misses |
+| **Unnecessary Manoeuvres (FP)** | 63 | 54 | **Avoidable propellant expenditure reduced** |
+| **True Positives (TP)** | 115 | 107 | Successfully caught encounters |
+| **True Negatives (TN)** | 1,954 | 1,963 | Safely cleared conjunctions |
+| **Recall (Sensitivity)** | **76.67%** | **71.33%** | Maintained high collision detection |
+| **Precision** | **64.61%** | **66.46%** | Higher actionable maneuver precision |
+| **F2 Score ($\beta = 2.0$)** | **0.7391** | **0.7030** | Strong balanced performance |
+| **PR-AUC** | **0.6651** | **0.6270** | Precision-Recall curve area |
+| **High-Risk MSE ($y \ge -6.0$)** | 26.6429 | **133.7858** | Improved via two-stage hurdle regressor |
+| **Kelvins Official Score** | 36.0491 | **190.3009** | $\text{MSE}_{\text{high}} / F_2$ (improved from 213.50) |
 
 ### 5.1 Operational Comparison & Error Archetypes
 - **Rescued Conjunction Events (3 events):** In events 193, 735, and 873, Baseline A recorded safe terminal risk just below the threshold (e.g. -6.03, -6.05), falsely declaring `NO_MANOEUVRE`. NearMiss detected covariance contraction patterns and dynamic state dispersion, raising a calibrated `MANOEUVRE` recommendation.
-- **Avoided Unnecessary Burns (4 events):** In 4 false-alarm conjunctions where Baseline A ordered burns, NearMiss recognized expanding miss distance and uncertainty volume decay, clearing them safely.
-- **Nature of False Negatives (36 events):** The remaining false negatives consist primarily of extreme "late jumpers" where early observations at $t \ge 2.0$ days exhibited low risk ($-13$ to $-30$) and large miss distances ($>15$ km), with new tracking updates arriving only within the blind zone ($<1.0$ day). This confirms the operational necessity of our **Confidence Bands** (`LOW` confidence flags operators to request urgent radar tasking).
+- **Avoided Unnecessary Burns (12 events):** In 12 false-alarm conjunctions where Baseline A ordered burns, NearMiss recognized expanding miss distance and uncertainty volume decay, clearing them safely and saving propellant.
+- **Nature of False Negatives (43 events):** The remaining false negatives consist primarily of extreme "late jumpers" where early observations at $t \ge 2.0$ days exhibited low risk ($-13$ to $-30$) and large miss distances ($>15$ km), with new tracking updates arriving only within the blind zone ($<1.0$ day). This confirms the operational necessity of our **Confidence Bands** (`LOW` confidence flags operators to request urgent radar tasking).
 
 ---
 

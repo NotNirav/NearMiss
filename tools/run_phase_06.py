@@ -13,10 +13,15 @@ if str(root_dir) not in sys.path:
 import numpy as np
 import pandas as pd
 
-from src.cutoff import apply_eval_filter
+from src.cutoff import apply_cutoff_and_targets, apply_eval_filter
 from src.evaluate import compute_classification_metrics, compute_regression_metrics
-from src.load import load_config, load_parquet, save_parquet
-from src.models import fit_predict_classifiers, fit_predict_regressors
+from src.features import build_all_features
+from src.load import load_config, load_parquet, load_raw_cdms, save_parquet
+from src.models import (
+    fit_predict_classifiers,
+    fit_predict_classifiers_augmented,
+    fit_predict_regressors,
+)
 
 
 def run_phase_06() -> None:
@@ -49,15 +54,45 @@ def run_phase_06() -> None:
     y_risk = df_merged["y_risk"]
     latest_risk = df_merged["latest_log_risk"]
 
-    print("Fitting Unweighted Classifiers...")
-    clfs_unweighted = fit_predict_classifiers(
-        X, y_high, df_merged, cfg, imbalance_strategy="unweighted"
-    )
+    cutoff_days = float(cfg["data"].get("cutoff_days", 2.0))
+    train_cutoffs = [float(c) for c in cfg["data"].get("train_cutoffs", [cutoff_days])]
+    extra_cutoffs = [c for c in train_cutoffs if abs(c - cutoff_days) > 1e-6]
 
-    print("Fitting Weighted Classifiers...")
-    clfs_weighted = fit_predict_classifiers(
-        X, y_high, df_merged, cfg, imbalance_strategy="weighted"
-    )
+    if extra_cutoffs:
+        print(f"Building multi-cutoff augmentation features for cutoffs={extra_cutoffs}...")
+        raw_train = load_raw_cdms("data/raw", "train")
+        train_eids = set(df_merged["event_id"].values)
+        raw_train = raw_train[raw_train["event_id"].isin(train_eids)]
+        op_thresh = float(cfg["thresholds"].get("operational_risk_log10", -4.0))
+        aug_X_list, aug_y_list = [], []
+        for c in extra_cutoffs:
+            vis_c, tgt_c, _ = apply_cutoff_and_targets(raw_train, c, high_thresh, op_thresh)
+            feat_c = build_all_features(vis_c, include_physics=True)
+            m_c = feat_c.merge(tgt_c[["event_id", "y_high_risk"]], on="event_id")
+            aug_X_list.append(m_c.drop(columns=["y_high_risk"]))
+            aug_y_list.append(m_c["y_high_risk"])
+        X_aug = pd.concat(aug_X_list, ignore_index=True)
+        y_aug = pd.concat(aug_y_list, ignore_index=True)
+        print(f"Augmented training pool: +{len(X_aug)} rows across {extra_cutoffs}")
+
+        print("Fitting Unweighted Classifiers (Multi-Cutoff Augmented)...")
+        clfs_unweighted = fit_predict_classifiers_augmented(
+            X, y_high, df_merged, X_aug, y_aug, cfg, imbalance_strategy="unweighted"
+        )
+        print("Fitting Weighted Classifiers (Multi-Cutoff Augmented)...")
+        clfs_weighted = fit_predict_classifiers_augmented(
+            X, y_high, df_merged, X_aug, y_aug, cfg, imbalance_strategy="weighted"
+        )
+    else:
+        print("Fitting Unweighted Classifiers...")
+        clfs_unweighted = fit_predict_classifiers(
+            X, y_high, df_merged, cfg, imbalance_strategy="unweighted"
+        )
+
+        print("Fitting Weighted Classifiers...")
+        clfs_weighted = fit_predict_classifiers(
+            X, y_high, df_merged, cfg, imbalance_strategy="weighted"
+        )
 
     print("Fitting Regressors (Direct & Residual)...")
     regs = fit_predict_regressors(X, y_risk, latest_risk, df_merged, cfg)
@@ -106,7 +141,7 @@ def run_phase_06() -> None:
             )
 
     print("\n--- REGRESSOR COMPARISON (High-Risk MSE) ---")
-    for reg_name in ["lgbm_direct", "lgbm_residual"]:
+    for reg_name in ["lgbm_direct", "lgbm_residual", "lgbm_conditional"]:
         col = f"{reg_name}_pred_risk"
         reg_m = compute_regression_metrics(
             filtered_targets["y_risk"], filtered_oof[col].values, high_thresh

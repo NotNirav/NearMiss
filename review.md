@@ -186,7 +186,7 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 - Compared continuous direct vs residual LightGBM regressors on high-risk MSE.
 - Generated `data/processed/oof_predictions.parquet` containing out-of-fold probability and risk scores for all 11,942 training events.
 - Added comprehensive unit tests in `tests/test_models.py` verifying residual formula reconstruction and fold isolation.
-- Populated Section 3 in `reports/results.md` with full benchmark numbers. Random Forest (weighted) achieved PR-AUC of 0.1926 and F2 of 0.4328, while LightGBM (weighted) achieved F2 of 0.4397 and reduced unnecessary maneuvers from 261 down to 182.
+- Populated Section 3 in `reports/results.md` with full benchmark numbers. Random Forest (weighted) achieved PR-AUC of 0.1926 and F2 of 0.4328 (19 FN, 232 FP), while LightGBM (weighted) achieved F2 of 0.4397 and reduced unnecessary maneuvers from 261 down to 182 (at the cost of increasing missed dangerous events from 19 to 23, recall 65.15%). Continuous LightGBM regressors struggled with the $-30.0$ risk floor, yielding High-Risk MSE of 132.5451 (Direct) and 144.8200 (Residual) compared to Baseline A's 8.0057.
 
 ### 2. Tests Passed
 - `tests/test_models.py::test_residual_prediction_formula`: PASSED
@@ -207,7 +207,7 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 ### 1. Summary of What Was Done
 - Implemented 1D Platt scaling (`fit_platt_scaler`, `apply_platt_scaler`) in `src/calibrate.py`, fitting strictly on out-of-fold ensemble scores without data leakage.
 - Reduced Brier calibration error by **59.5%** on the champion Random Forest model (Brier: $0.01724 \rightarrow 0.00698$).
-- Implemented `tune_decision_threshold` optimizing decision probability threshold ($p^* = 0.0300$) on out-of-fold data for maximum $F_2$ score ($F_2 = 0.4224$).
+- Implemented `tune_decision_threshold` optimizing decision probability threshold ($p^* = 0.0300$) on out-of-fold data for maximum $F_2$ score ($F_2 = 0.4224$, 23 FN, 202 FP; slightly lower than the uncalibrated Phase 06 RF $F_2 = 0.4328$ due to Platt sigmoid compression near the ~0.80% base rate and discrete threshold grid granularity).
 - Implemented `assign_confidence` categorizing each prediction into `HIGH`, `MEDIUM`, or `LOW` confidence bands using margins $|p - p^*|$ specified in `config.yaml`.
 - Generated `reports/figures/calibration_curve.png` displaying the reliability diagram before and after calibration.
 - Created unit tests in `tests/test_calibrate.py` verifying probability bounds, threshold sweep logic, and margin classifications.
@@ -288,12 +288,10 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 
 ### 1. Summary of What Was Done
 - Executed comprehensive error analysis and model interpretability in `notebooks/02_error_analysis.ipynb`.
-- Evaluated performance on the official unpolluted ESA competition locked test set (**2,167 events**, 150 high-risk encounters):
-  - Recall: **76.00%** (114 confirmed dangerous conjunctions caught)
-  - Precision: **64.04%**
-  - F2 Score: **0.7326**
-  - PR-AUC: **0.6164**
-  - Avoided 4 unnecessary collision burns ordered by Baseline A while capturing 3 dangerous conjunctions missed by Baseline A (rescued encounters: Events 193, 735, and 873).
+- Evaluated performance on the official unpolluted ESA competition locked test set (**2,167 events**, 150 high-risk encounters), comparing NearMiss Champion (RF + Platt with multi-cutoff augmentation and two-stage hurdle regression) against Baseline A (Persistence):
+  - **Champion (RF + Platt):** Recall **71.33%** (107 TP, **43 FN**), Precision **66.46%** (**54 FP**), F2 **0.7030**, PR-AUC **0.6270**, High-Risk MSE **133.7858** (improved from 156.42), Kelvins Official Score **190.3009** (improved from 213.50).
+  - **Baseline A (Persistence):** Recall **76.67%** (115 TP, **35 FN**), Precision **64.61%** (**63 FP**), F2 **0.7391**, PR-AUC **0.6651**, High-Risk MSE **26.6429**, Kelvins Official Score **36.0491**.
+  - **Operational Trade-offs:** NearMiss avoided **12 unnecessary collision burns** ordered by Baseline A and captured 3 dangerous conjunctions missed by Baseline A (rescued encounters: Events 193, 735, and 873).
 - Generated global Tree SHAP explanations saving bar charts and beeswarm plots to `reports/figures/shap_importance.png` and `reports/figures/shap_summary_beeswarm.png`, revealing that covariance volume contraction, combined positional sigmas, and miss distance rates are the leading physical drivers.
 - Finalized Sections 5 and 6 of `reports/results.md`.
 - Completed `CREDITS.md` with verified URLs and CC-BY-4.0 open licenses for the ESA dataset, competition paper, covariance physics formulations, and calibration algorithms.
@@ -301,7 +299,7 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 - Validated all 10 items in Section 13 Definition of Done.
 
 ### 2. Tests Passed
-- Full automated test suite: 18 passed in 4.16s across all test modules (`test_setup.py`, `test_no_leakage.py`, `test_evaluate.py`, `test_features.py`, `test_models.py`, `test_calibrate.py`, `test_recommend.py`, `test_app.py`).
+- Full automated test suite: 19 passed in 7.40s across all test modules (`test_setup.py`, `test_no_leakage.py`, `test_evaluate.py`, `test_features.py`, `test_models.py`, `test_calibrate.py`, `test_recommend.py`, `test_app.py`), including multi-cutoff fold group isolation verification.
 - Gate check: zero occurrences of `read_csv` anywhere outside `src/load.py`.
 
 ### 3. Bugs Fixed
@@ -321,4 +319,4 @@ A comprehensive test of the entire NearMiss system was conducted across all 10 p
 3. **Feature Engineering**: Validated that all 73 trajectory, dynamics, and covariance physics features are invariant to future tracking CDMs.
 4. **Model Training & Platt Calibration**: Confirmed that 5-fold cross-validation and Platt scaling reduce calibration Brier error by 59.5% and tune decision thresholds cleanly.
 5. **Dashboard & User Interface**: Streamlit application compiles cleanly, loads real parquet outputs, provides multi-split inspection, renders Plotly trajectories with blind zone shading, and supports interactive threshold cost simulations.
-6. **All 18 unit tests passing**: 100% test pass rate with strict isolation.
+6. **All 19 unit tests passing**: 100% test pass rate with strict isolation.

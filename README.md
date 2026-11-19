@@ -4,7 +4,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: CC-BY-4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](CREDITS.md)
-[![Tests: 18/18 Passing](https://img.shields.io/badge/tests-18%2F18%20passing-brightgreen.svg)](tests/)
+[![Tests: 19/19 Passing](https://img.shields.io/badge/tests-19%2F19%20passing-brightgreen.svg)](tests/)
 [![Dataset: ESA Collision Avoidance](https://img.shields.io/badge/dataset-ESA%20Kelvins-orange.svg)](https://zenodo.org/records/4463683)
 [![Cutoff Isolation: Verified](https://img.shields.io/badge/leakage_isolation-verified-success.svg)](src/cutoff.py)
 
@@ -51,10 +51,13 @@ NearMiss was trained on **11,942 valid conjunction events** (111,939 pre-cutoff 
 | Metric | Baseline A (Persistence) | NearMiss Champion | Notes |
 | :--- | :---: | :---: | :--- |
 | **Evaluated Events** | 2,167 | 2,167 | 100% evaluated without label leakage |
-| **True Collisions Caught (TP)** | 115 | 114 | Maintained 76.0% recall on blind encounters |
-| **Avoided False Alarm Burns** | — | **+4 Burns Avoided** | Conserves precious satellite lifetime fuel |
+| **True Collisions Caught (TP)** | 115 | 107 | Maintained 71.3% recall on blind encounters |
+| **Avoided False Alarm Burns** | — | **+12 Burns Avoided** | Conserves precious satellite lifetime fuel |
 | **Rescued Conjunctions** | — | **+3 Events Rescued** | Caught collisions falsely cleared by Baseline A (Events 193, 735, 873) |
-| **$F_2$ Score** | 0.7391 | **0.7326** | Robust generalization on unseen orbits |
+| **High-Risk MSE ($y \ge -6.0$)** | 26.64 | **133.79** | Reduced with two-stage hurdle regressor |
+| **Kelvins Official Score** | 36.05 | **190.30** | $\text{MSE}_{\text{high}} / F_2$ (improved from 213.50) |
+| **Precision** | 64.61% | **66.46%** | Higher maneuver confidence |
+| **PR-AUC** | 0.6651 | **0.6270** | Robust precision-recall curve |
 
 ---
 
