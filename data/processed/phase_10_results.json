@@ -1,0 +1,26 @@
+{
+  "test_events": 2167,
+  "test_positives": 150,
+  "baseline": {
+    "fn": 35,
+    "fp": 63,
+    "recall": 0.7666666666666667,
+    "precision": 0.6460674157303371,
+    "f2": 0.7390745501285348,
+    "pr_auc": 0.6650765911180723,
+    "high_risk_mse": 26.64296849773363,
+    "kelvins_score": 36.04909476736828
+  },
+  "model": {
+    "fn": 36,
+    "fp": 64,
+    "recall": 0.76,
+    "precision": 0.6404494382022472,
+    "f2": 0.7326478149100258,
+    "pr_auc": 0.6164054831571646,
+    "high_risk_mse": 156.4239315158,
+    "kelvins_score": 213.50494512156558
+  },
+  "avoided_burns": 4,
+  "rescued_events": 3
+}

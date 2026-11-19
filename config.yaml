@@ -1,0 +1,24 @@
+# config.yaml
+project:
+  random_seed: 42
+
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  cutoff_days: 2.0
+  train_cutoffs: [2.0]            # optional augmentation, see Phase 6: [2.0, 3.0, 4.0]
+
+eval_filter:                      # applied to validation and test results
+  min_pre_cutoff_cdms: 1
+  max_final_time_to_tca: 1.0      # verify against Kelvins data page
+
+thresholds:
+  high_risk_log10: -6.0           # primary
+  operational_risk_log10: -4.0    # secondary, report as well
+  decision_prob: 0.35             # placeholder; tuned on out-of-fold F2 / cost
+  confidence_margin_high: 0.25    # |p - decision_prob| >= 0.25 -> HIGH
+  confidence_margin_medium: 0.10  # 0.10 to 0.25 -> MEDIUM, below 0.10 -> LOW
+
+validation:
+  n_splits: 5
+  holdout_fraction: 0.20          # only if no official labelled test set

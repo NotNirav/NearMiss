@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Raw large datasets
+data/raw/
+*.zip
+*.tar.gz
+
+# Large intermediate parquet files (>50MB)
+data/processed/cdms_visible_train.parquet
+
+# Streamlit local state
+.streamlit/secrets.toml
+
+# OS artifacts
+.DS_Store
+Thumbs.db
