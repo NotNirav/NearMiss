@@ -250,34 +250,34 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 
 ---
 
-## Phase 09: Operational Dashboard
+## Phase 09: Operational Dashboard & Aerospace UI Overhaul
 
 ### 1. Summary of What Was Done
 - Implemented full interactive Streamlit dashboard (`app/streamlit_app.py`) fulfilling all requirements from Master Build Plan Section 9:
-  - **Operational Dark Theme**: Implemented dark theme in `.streamlit/config.toml` and inline styling (`#090D16` app background, `#111827` cards, `#38BDF8` primary blue, `#EF4444` red alert badges, `#10B981` safe badges).
-  - **Top Bar & Split Selector**: Live dataset switch between `Validation Set (OOF Fold 0)` and `Locked Test Set (ESA Competition)`, display of primary and operational risk thresholds, active decision cutoff (2.0 days), and high-level mission KPIs.
-  - **Tab 1 (Conjunction Event Inspector)**:
-    - Searchable and filterable event drawer (filter by `recommendation`, `confidence`, and `event_id`, sorted descending by collision probability).
-    - Conjunction Decision Banner displaying the model recommendation, Platt-calibrated probability, confidence level (`HIGH`, `MEDIUM`, `LOW`), predicted final log-risk, and the side-by-side Baseline A recommendation.
-    - Interactive Plotly **Risk Trajectory**: $x$-axis from 7.0 down to 0.0 days to TCA; visible CDMs up to the 2.0-day decision cutoff; vertical dashed cutoff line; shaded **blind zone** ($< 2.0$ days); predicted final risk marker; and an interactive **Reveal Ground Truth** toggle to inspect post-cutoff CDMs and actual collision outcome for operational demos.
-    - Conjunction geometry and miss distance tracking chart across CDMs.
-  - **Tab 2 (Threshold & Cost Simulator)**:
-    - Interactive threshold slider ($p^*$) and operational cost ratio slider ($C_{\text{FN}} / C_{\text{FP}}$).
-    - Real-time confusion matrix recalculation, missed collision risk counts, and fuel-saving calculations against Baseline A.
-  - **Tab 3 (Model Benchmarks & Reliability)**:
-    - Renders official Kelvins benchmark tables, champion model comparison, Platt calibration curves, and physics feature explanations.
+  - **Operational Dark Theme**: Implemented dark theme in `.streamlit/config.toml` and inline styling (`#060913` canvas, `#0F172A` surface, `#16223B` elevated cards, `#22D3EE` primary cyan, `#F43F5E` red alert badges, `#34D399` safe badges).
+  - **Top Bar & Navigation**: Fixed cluttered header by creating a unified command header and top navigation bar with 4 views (`Overview`, `Event Inspector`, `Policy Simulator`, `Benchmarks & Physics`).
+  - **Overview (Mission Briefing Landing Page)**: Added high-impact executive landing page with problem overview (T-48h blind zone), interactive CTA quick-links, live monitored encounter KPIs, 4-step pipeline cards, verified outcomes, and one-click quick-jumps to featured case studies (Rescued Event #873, Avoided False Alarm #409).
+  - **Event Inspector**: Re-architected layout to eliminate blank voids:
+    - Searchable/filterable conjunction selector with active search and recommendation filters.
+    - Decision HUD displaying NearMiss recommendation vs Baseline A, Platt-calibrated probability, hurdle risk estimate, and confidence tiers (`HIGH`, `MEDIUM`, `LOW`).
+    - Synchronized side-by-side Plotly charts: Risk Trajectory (with shaded T-48h blind zone and ground-truth reveal toggle) and Relative Miss Distance Profile across passes.
+  - **Policy Simulator**: Constellation economics simulator with 3 industry presets (SmallSat, Earth Observation, High-Value Infrastructure), interactive threshold slider ($p^*$), live frontier trade-off curve, and confusion matrix cards.
+  - **Benchmarks & Physics**: Full-width ESA Kelvins scorecards, Platt calibration curves, Tree SHAP attributions, and orbital physics cards (preventing squished/clipped tables).
+  - **Sidebar Polish**: Clean branding, evaluation cohort radio with descriptive event count card, quick-jump encounter buttons, and formatted operator threshold guide (replaced raw LaTeX `10^{-6}` strings with clean unicode `10⁻⁶`).
 - Added automated unit test suite in `tests/test_app.py` validating data loading contracts, split availability, and history cross-referencing.
 - Verified headless execution, import integrity, and strict `read_csv` isolation.
 
 ### 2. Tests Passed
 - `tests/test_app.py::test_app_data_loading`: PASSED
 - `tests/test_app.py::test_app_split_filtering`: PASSED
-- All 18 project unit tests passed in 4.20s.
-- Gate checks: `python -c "import app.streamlit_app"` PASSED; zero `read_csv` occurrences outside `src/load.py`.
+- All 19 project unit tests passed cleanly in pytest.
+- Gate checks: `python -m py_compile app/streamlit_app.py` PASSED; zero `read_csv` occurrences outside `src/load.py`.
 
 ### 3. Bugs Fixed
 - **Column naming alignment between mock schema and real export:** The app unit tests initially checked for temporary mock names (`predicted_final_risk`, `baseline_a_recommendation`, `risk`, `is_visible`), whereas production export used the exact Section 6 specification (`pred_final_log_risk`, `baseline_recommendation`, `log_risk`, `visible`). Standardized `tests/test_app.py` to match the exact Section 6 schema.
 - **Streamlit ScriptRunContext warnings during test collection:** Fixed test runner imports to cleanly test backend data caching and dataframe loaders without spawning headless browser servers.
+- **Layout squishing and blank spaces:** Fixed excessive padding and empty spaces by constraining container width (`max-width: 1420px`), pairing Risk and Miss Distance charts side-by-side, and rendering benchmark tables full-width.
+- **LaTeX formatting errors in Streamlit components:** Replaced raw LaTeX math formatting (`$10^{-6}$`) with clean Unicode representations (`10⁻⁶`, `10⁻⁴`) to prevent raw unparsed markup.
 
 ### 4. What More Can Be Done for This Phase
 - Integrate CesiumJS or 3D WebGL satellite orbit visualization to view 3D close-approach encounter geometry alongside the 2D time series.
