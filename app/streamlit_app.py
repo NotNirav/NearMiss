@@ -1,11 +1,16 @@
-"""NearMiss (SW-5) — Autonomous Satellite Collision Risk Predictor.
+"""NearMiss — Autonomous Satellite Collision Risk Predictor.
 
-Aerospace Operations Console & Decision Support System.
+Aerospace Operations Console & Decision Support Interface.
+
 Views:
-- Overview: Mission briefing, operational pipeline, live cohort telemetry, and featured case studies.
-- Event Inspector: Conjunction trajectory deep-dive, Decision HUD vs Baseline A, and blind-zone reveal.
-- Policy Simulator: Constellation mission economics, threshold frontier, and confusion matrices.
-- Benchmarks & Physics: Full-width ESA Kelvins scorecards, calibration reliability, and orbital physics.
+- Overview: Landing briefing, live T-48h Blind Zone trajectory showcase,
+  operational pipeline, and curated encounter walkthroughs.
+- Event Inspector: Searchable conjunction audit, NearMiss vs Baseline A verdict,
+  synchronized risk & miss-distance trajectories, and blind-zone reveal.
+- Policy Simulator: Decision threshold and mission economics simulator with
+  live FN/FP trade-off frontier and confusion matrices.
+- Benchmarks: Full-width ESA Kelvins evaluation tables, interactive Platt
+  calibration reliability, and Tree SHAP orbital physics attributions.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Ensure root directory on path
+# Ensure repository root is importable when launched via `streamlit run`
 root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
@@ -22,6 +27,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
 
 from src.evaluate import compute_classification_metrics
 from src.load import load_config, load_parquet
@@ -40,412 +47,549 @@ NAV_PAGES = [
     "Overview",
     "Event Inspector",
     "Policy Simulator",
-    "Benchmarks & Physics",
+    "Benchmarks",
+]
+
+# Exact Top-12 global Tree SHAP mean(|SHAP|) importances from Phase 10 audit
+TOP_SHAP_FEATURES = [
+    ("latest_log_risk", "Latest pre-cutoff log risk", 0.1186, "Trajectory"),
+    ("risk_max", "Peak observed risk", 0.0597, "Trajectory"),
+    ("latest_max_risk_estimate", "Max possible risk envelope", 0.0546, "Covariance"),
+    ("latest_max_risk_scaling", "Covariance scaling factor", 0.0517, "Covariance"),
+    ("risk_mean", "Mean risk across passes", 0.0428, "Trajectory"),
+    ("risk_min", "Minimum observed risk", 0.0246, "Trajectory"),
+    ("risk_total_change", "Net risk change (first to cutoff)", 0.0185, "Dynamics"),
+    ("risk_first", "Initial tracking log risk", 0.0133, "Trajectory"),
+    ("risk_slope_per_day", "Risk escalation slope / day", 0.0116, "Dynamics"),
+    ("latest_time_to_tca", "Hours remaining at last CDM", 0.0072, "Timing"),
+    ("latest_uncertainty_volume", "3D ellipsoid volume √det(C)", 0.0067, "Covariance"),
+    ("risk_last_step_change", "Most recent CDM risk jump", 0.0062, "Dynamics"),
 ]
 
 # -----------------------------------------------------------------------------
-# ORBITAL TELEMETRY DESIGN SYSTEM
+# DESIGN SYSTEM — ESOC FLIGHT INSTRUMENTATION PALETTE & TYPOGRAPHY
 # -----------------------------------------------------------------------------
 st.markdown(
     """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
-    :root {
-        --bg-canvas: #060913;
-        --bg-surface: #0F172A;
-        --bg-elevated: #16223B;
-        --bg-hover: #1E2E4E;
-        --border-subtle: #243554;
-        --border-bright: #334B75;
-        --text-primary: #F8FAFC;
-        --text-secondary: #CBD5E1;
-        --text-muted: #94A3B8;
-        --cyan: #22D3EE;
-        --indigo: #818CF8;
-        --coral: #FB7185;
-        --red-alert: #F43F5E;
-        --emerald: #34D399;
-        --amber: #FBBF24;
-    }
+:root {
+    --bg-0: #0B0E14;
+    --bg-1: #121722;
+    --bg-2: #192131;
+    --bg-3: #222D42;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --ink-1: #F8FAFC;
+    --ink-2: #CBD5E1;
+    --ink-3: #8B98B0;
+    --sky: #38BDF8;
+    --sky-bright: #7DD3FC;
+    --gold: #F59E0B;
+    --gold-soft: #FCD34D;
+    --red: #F43F5E;
+    --red-soft: #FDA4AF;
+    --green: #10B981;
+    --green-soft: #6EE7B7;
+}
 
-    /* Base App & Layout Spacing */
-    .stApp {
-        background: radial-gradient(circle at 15% 0%, rgba(34, 211, 238, 0.06) 0%, var(--bg-canvas) 45%) !important;
-        color: var(--text-primary) !important;
-        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
-    }
+/* Global canvas with subtle top-right orbital horizon lighting */
+.stApp {
+    background:
+        radial-gradient(ellipse 75% 42% at 72% -8%, rgba(56, 189, 248, 0.13) 0%, transparent 62%),
+        radial-gradient(ellipse 45% 32% at 18% 0%, rgba(245, 158, 11, 0.06) 0%, transparent 58%),
+        var(--bg-0) !important;
+    color: var(--ink-1) !important;
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
 
-    /* Tighten Streamlit main container so there are no huge blank gaps */
-    .main .block-container {
-        padding-top: 1.1rem !important;
-        padding-bottom: 2.5rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-        max-width: 1420px !important;
-    }
+/* Eliminate Streamlit 1.65's massive default container padding (96px top / 80px sides) */
+[data-testid="stMainBlockContainer"] {
+    padding: 0.9rem 2rem 2.2rem 2rem !important;
+    max-width: 1460px !important;
+}
 
-    /* Hide noisy Streamlit deploy/menu bar while preserving sidebar collapse button */
-    header[data-testid="stHeader"] {
-        background: transparent !important;
-        height: 2.5rem !important;
-    }
-    [data-testid="stToolbar"] {
-        visibility: hidden !important;
-    }
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {
+    gap: 0.7rem !important;
+}
 
-    code, pre, .mono {
-        font-family: 'JetBrains Mono', monospace !important;
-    }
+/* Compact transparent top chrome while preserving sidebar toggle */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    height: 2.2rem !important;
+}
+[data-testid="stToolbar"] {
+    visibility: hidden !important;
+}
 
-    /* Sidebar Polish — prevent clipping and ensure readable spacing */
-    section[data-testid="stSidebar"] {
-        background-color: #090E1C !important;
-        border-right: 1px solid var(--border-subtle) !important;
-        min-width: 280px !important;
-    }
-    section[data-testid="stSidebar"] > div:first-child {
-        padding: 1.25rem 1.1rem 2rem 1.1rem !important;
-    }
-    .sb-brand {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding-bottom: 14px;
-        border-bottom: 1px solid var(--border-subtle);
-        margin-bottom: 14px;
-    }
-    .sb-badge {
-        background: rgba(34, 211, 238, 0.14);
-        border: 1.5px solid rgba(34, 211, 238, 0.5);
-        color: var(--cyan);
-        font-family: 'JetBrains Mono', monospace;
-        font-weight: 800;
-        font-size: 0.9rem;
-        padding: 6px 10px;
-        border-radius: 8px;
-        flex-shrink: 0;
-    }
-    .sb-label {
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--cyan);
-        margin: 16px 0 6px 0;
-    }
-    .sb-card {
-        background: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
-        border-radius: 8px;
-        padding: 10px 12px;
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-        line-height: 1.45;
-        margin-bottom: 8px;
-    }
-    .sb-rule-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-        padding: 5px 0;
-        border-bottom: 1px solid rgba(36, 53, 84, 0.55);
-        font-size: 0.78rem;
-    }
-    .sb-rule-row:last-child {
-        border-bottom: none;
-    }
+/* Sidebar — zero top void, zero left clipping, clean mission rail */
+section[data-testid="stSidebar"] {
+    background-color: #0E131D !important;
+    border-right: 1px solid var(--line) !important;
+}
+[data-testid="stSidebarHeader"] {
+    padding: 0.65rem 1rem 0.15rem 1rem !important;
+    min-height: 0 !important;
+    height: auto !important;
+}
+[data-testid="stSidebarUserContent"] {
+    padding: 0.2rem 1rem 1.4rem 1rem !important;
+}
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] {
+    gap: 0.55rem !important;
+}
 
-    /* Top Command Header */
-    .cmd-header {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.96) 0%, rgba(22, 34, 59, 0.92) 100%);
-        border: 1px solid var(--border-bright);
-        border-top: 2px solid var(--cyan);
-        border-radius: 12px;
-        padding: 14px 20px;
-        margin-bottom: 14px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 12px;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-    }
-    .cmd-brand {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-    }
-    .cmd-logo {
-        background: rgba(34, 211, 238, 0.14);
-        border: 1.5px solid rgba(34, 211, 238, 0.55);
-        color: var(--cyan);
-        font-family: 'JetBrains Mono', monospace;
-        font-weight: 800;
-        font-size: 0.9rem;
-        padding: 6px 12px;
-        border-radius: 8px;
-        letter-spacing: 0.06em;
-    }
-    .cmd-title {
-        font-size: 1.25rem;
-        font-weight: 800;
-        color: var(--text-primary);
-        letter-spacing: -0.02em;
-        line-height: 1.2;
-    }
-    .cmd-sub {
-        font-size: 0.8rem;
-        color: var(--text-muted);
-        margin-top: 2px;
-    }
-    .cmd-pills {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-    .pill-cohort {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.76rem;
-        font-weight: 600;
-        color: var(--cyan);
-        background: rgba(34, 211, 238, 0.12);
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        padding: 5px 12px;
-        border-radius: 999px;
-    }
-    .pill-cutoff {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.76rem;
-        font-weight: 600;
-        color: #FDA4AF;
-        background: rgba(244, 63, 94, 0.14);
-        border: 1px solid rgba(244, 63, 94, 0.4);
-        padding: 5px 12px;
-        border-radius: 999px;
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-    }
-    .pulse-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--red-alert);
-        box-shadow: 0 0 8px var(--red-alert);
-    }
+.mono {
+    font-family: 'IBM Plex Mono', monospace !important;
+}
+.display {
+    font-family: 'Space Grotesk', sans-serif !important;
+}
 
-    /* Landing Hero */
-    .hero-panel {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(22, 34, 59, 0.92) 60%, rgba(15, 36, 56, 0.95) 100%);
-        border: 1px solid var(--border-bright);
-        border-radius: 14px;
-        padding: 28px 32px;
-        margin-bottom: 20px;
-        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
-    }
-    .hero-title {
-        font-size: 2.15rem;
-        font-weight: 800;
-        color: var(--text-primary);
-        letter-spacing: -0.03em;
-        line-height: 1.15;
-        margin-bottom: 12px;
-    }
-    .hero-accent {
-        color: var(--cyan);
-    }
-    .hero-copy {
-        font-size: 1rem;
-        color: var(--text-secondary);
-        line-height: 1.65;
-        max-width: 880px;
-        margin-bottom: 0;
-    }
+/* Top Navigation Brand & Live Status */
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 0;
+}
+.nav-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(245, 158, 11, 0.2));
+    border: 1px solid rgba(56, 189, 248, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.nav-name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+}
+.nav-sub {
+    font-size: 0.72rem;
+    color: var(--ink-3);
+    line-height: 1.2;
+}
+.nav-status {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+}
+.status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-1);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--ink-2);
+    white-space: nowrap;
+}
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--gold);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+}
+.nav-divider {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 2px 0 6px 0;
+}
 
-    /* Pipeline Strip */
-    .pipe-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
-        margin: 16px 0 22px 0;
-    }
-    @media (max-width: 960px) {
-        .pipe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-    .pipe-card {
-        background: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
-        border-top: 3px solid var(--cyan);
-        border-radius: 10px;
-        padding: 16px;
-    }
-    .pipe-card.cutoff { border-top-color: var(--red-alert); }
-    .pipe-card.physics { border-top-color: var(--indigo); }
-    .pipe-card.calib { border-top-color: var(--emerald); }
-    .pipe-tag {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.72rem;
-        font-weight: 700;
-        color: var(--text-muted);
-        margin-bottom: 6px;
-    }
-    .pipe-title {
-        font-size: 1rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        margin-bottom: 6px;
-    }
-    .pipe-desc {
-        font-size: 0.83rem;
-        color: var(--text-secondary);
-        line-height: 1.5;
-    }
+/* Streamlit 1.65 Button Styling (exact data-testid match) */
+button[data-testid="stBaseButton-primary"] {
+    background: var(--sky) !important;
+    color: #07101C !important;
+    border: 1px solid var(--sky) !important;
+    border-radius: 7px !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.86rem !important;
+    min-height: 36px !important;
+    padding: 0.35rem 0.85rem !important;
+}
+button[data-testid="stBaseButton-primary"]:hover {
+    background: var(--sky-bright) !important;
+    border-color: var(--sky-bright) !important;
+}
+button[data-testid="stBaseButton-secondary"] {
+    background: var(--bg-1) !important;
+    color: var(--ink-2) !important;
+    border: 1px solid var(--line-strong) !important;
+    border-radius: 7px !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    min-height: 36px !important;
+    padding: 0.35rem 0.8rem !important;
+}
+button[data-testid="stBaseButton-secondary"]:hover {
+    background: var(--bg-2) !important;
+    border-color: rgba(56, 189, 248, 0.55) !important;
+    color: var(--ink-1) !important;
+}
 
-    /* KPI / Stat Cards */
-    .kpi-card {
-        background: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 16px 18px;
-        height: 100%;
-    }
-    .kpi-label {
-        font-size: 0.74rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--text-muted);
-        margin-bottom: 6px;
-    }
-    .kpi-val {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 1.75rem;
-        font-weight: 800;
-        color: var(--text-primary);
-        line-height: 1.15;
-    }
-    .kpi-sub {
-        font-size: 0.78rem;
-        color: var(--text-secondary);
-        margin-top: 5px;
-    }
+/* Sidebar sections */
+.sb-section-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--ink-1);
+    margin: 4px 0 2px 0;
+}
+.sb-help {
+    font-size: 0.77rem;
+    color: var(--ink-3);
+    line-height: 1.42;
+    margin-bottom: 4px;
+}
+.sb-stat-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 11px;
+    margin-top: 4px;
+}
+.sb-stat-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.02rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    line-height: 1.15;
+}
+.sb-stat-lbl {
+    font-size: 0.7rem;
+    color: var(--ink-3);
+    margin-top: 2px;
+}
+.sb-hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 8px 0 4px 0;
+}
+.sb-guide-item {
+    padding: 7px 0;
+    border-bottom: 1px solid var(--line);
+}
+.sb-guide-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.sb-guide-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink-1);
+}
+.sb-guide-desc {
+    font-size: 0.73rem;
+    color: var(--ink-3);
+    line-height: 1.38;
+    margin-top: 2px;
+}
 
-    /* Info / Case Cards */
-    .info-card {
-        background: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 18px 20px;
-        margin-bottom: 12px;
-    }
-    .info-card-title {
-        font-size: 1.02rem;
-        font-weight: 700;
-        margin-bottom: 6px;
-    }
-    .info-card-body {
-        font-size: 0.86rem;
-        color: var(--text-secondary);
-        line-height: 1.55;
-    }
+/* Hero & Landing Page Typography */
+.hero-headline {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 2.35rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    letter-spacing: -0.03em;
+    line-height: 1.12;
+    margin: 4px 0 12px 0;
+}
+.hero-lead {
+    font-size: 0.98rem;
+    color: var(--ink-2);
+    line-height: 1.62;
+    max-width: 60ch;
+    margin: 0 0 18px 0;
+}
+.hero-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: 1px solid var(--line-strong);
+    border-bottom: 1px solid var(--line);
+    padding: 14px 0;
+    margin: 4px 0 18px 0;
+    gap: 12px;
+}
+.hm-cell {
+    padding-right: 10px;
+    border-right: 1px solid var(--line);
+}
+.hm-cell:last-child {
+    border-right: none;
+    padding-right: 0;
+}
+.hm-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.38rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    line-height: 1.15;
+}
+.hm-lbl {
+    font-size: 0.75rem;
+    color: var(--ink-3);
+    margin-top: 3px;
+    line-height: 1.3;
+}
 
-    /* Decision HUD */
-    .hud-panel {
-        background: var(--bg-surface);
-        border: 1px solid var(--border-bright);
-        border-radius: 12px;
-        padding: 20px 22px;
-        margin: 12px 0 16px 0;
-    }
-    .badge-burn {
-        background: rgba(244, 63, 94, 0.16);
-        border: 2px solid var(--red-alert);
-        color: #FDA4AF;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 1.1rem;
-        font-weight: 800;
-        padding: 9px 18px;
-        border-radius: 8px;
-        display: inline-block;
-        letter-spacing: 0.04em;
-    }
-    .badge-safe {
-        background: rgba(52, 211, 153, 0.14);
-        border: 2px solid var(--emerald);
-        color: #6EE7B7;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 1.1rem;
-        font-weight: 800;
-        padding: 9px 18px;
-        border-radius: 8px;
-        display: inline-block;
-        letter-spacing: 0.04em;
-    }
-    .conf-pill {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.76rem;
-        font-weight: 700;
-        padding: 4px 10px;
-        border-radius: 6px;
-    }
-    .conf-high { background: rgba(34, 211, 238, 0.16); color: var(--cyan); border: 1px solid rgba(34, 211, 238, 0.45); }
-    .conf-med { background: rgba(251, 191, 36, 0.16); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.45); }
-    .conf-low { background: rgba(148, 163, 184, 0.16); color: var(--text-secondary); border: 1px solid rgba(148, 163, 184, 0.45); }
+/* Structural Pipeline Strip */
+.section-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    letter-spacing: -0.015em;
+    margin: 6px 0 2px 0;
+}
+.section-desc {
+    font-size: 0.87rem;
+    color: var(--ink-3);
+    margin: 0 0 10px 0;
+}
+.flow-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin: 6px 0 14px 0;
+}
+.flow-step {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-top: 2px solid var(--sky);
+    border-radius: 8px;
+    padding: 15px 17px;
+}
+.flow-step.gold { border-top-color: var(--gold); }
+.flow-step.green { border-top-color: var(--green); }
+.flow-step-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.98rem;
+    font-weight: 600;
+    color: var(--ink-1);
+    margin-bottom: 5px;
+}
+.flow-step-body {
+    font-size: 0.84rem;
+    color: var(--ink-2);
+    line-height: 1.52;
+}
 
-    .hud-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
-        border-top: 1px solid var(--border-subtle);
-        padding-top: 14px;
-        margin-top: 14px;
-    }
-    @media (max-width: 820px) {
-        .hud-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
+/* Case Study Panels */
+.case-panel {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--red);
+    border-radius: 8px;
+    padding: 15px 18px;
+    margin-bottom: 8px;
+}
+.case-panel.saved {
+    border-left-color: var(--green);
+}
+.case-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.case-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.98rem;
+    font-weight: 600;
+    color: var(--ink-1);
+}
+.case-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(244, 63, 94, 0.14);
+    color: var(--red-soft);
+}
+.case-tag.saved {
+    background: rgba(16, 185, 129, 0.14);
+    color: var(--green-soft);
+}
+.case-body {
+    font-size: 0.84rem;
+    color: var(--ink-2);
+    line-height: 1.5;
+    margin-bottom: 10px;
+}
+.case-compare {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    background: var(--bg-0);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.76rem;
+}
 
-    /* Clean Styled Buttons */
-    div.stButton > button {
-        border-radius: 8px !important;
-        font-weight: 700 !important;
-        font-size: 0.86rem !important;
-        padding: 0.5rem 0.9rem !important;
-        transition: all 0.15s ease !important;
-    }
-    div.stButton > button[kind="secondary"] {
-        background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-bright) !important;
-        color: var(--text-secondary) !important;
-    }
-    div.stButton > button[kind="secondary"]:hover {
-        border-color: var(--cyan) !important;
-        color: var(--text-primary) !important;
-        background-color: var(--bg-elevated) !important;
-    }
-    div.stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #0891B2 0%, #22D3EE 100%) !important;
-        border: none !important;
-        color: #060913 !important;
-    }
+/* Compact Decision HUD for Event Inspector */
+.hud-strip {
+    background: var(--bg-1);
+    border: 1px solid var(--line-strong);
+    border-left: 4px solid var(--red);
+    border-radius: 8px;
+    padding: 14px 18px;
+    display: grid;
+    grid-template-columns: 1.6fr 1fr 1fr 1.15fr 1fr;
+    gap: 14px;
+    align-items: center;
+}
+.hud-strip.safe {
+    border-left-color: var(--green);
+}
+.verdict-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+}
+.verdict-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.08rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+.verdict-meta {
+    font-size: 0.77rem;
+    color: var(--ink-3);
+    margin-top: 3px;
+}
+.conf-pill {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+.conf-high { background: rgba(56, 189, 248, 0.16); color: var(--sky-bright); border: 1px solid rgba(56, 189, 248, 0.4); }
+.conf-medium { background: rgba(245, 158, 11, 0.16); color: var(--gold-soft); border: 1px solid rgba(245, 158, 11, 0.4); }
+.conf-low { background: rgba(148, 163, 184, 0.16); color: var(--ink-2); border: 1px solid rgba(148, 163, 184, 0.35); }
+.hud-cell {
+    border-left: 1px solid var(--line);
+    padding-left: 14px;
+}
+.hud-label {
+    font-size: 0.73rem;
+    color: var(--ink-3);
+    margin-bottom: 2px;
+}
+.hud-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.18rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    line-height: 1.2;
+}
+.hud-sub {
+    font-size: 0.72rem;
+    color: var(--ink-3);
+    margin-top: 2px;
+}
 
-    /* Section Header */
-    .section-head {
-        font-size: 1.2rem;
-        font-weight: 800;
-        color: var(--text-primary);
-        margin: 8px 0 4px 0;
-        letter-spacing: -0.01em;
-    }
-    .section-sub {
-        font-size: 0.86rem;
-        color: var(--text-muted);
-        margin-bottom: 14px;
-    }
-    </style>
-    """,
+/* KPI Strip for Simulator & Benchmarks */
+.kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.kpi-tile {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.kpi-tile-lbl {
+    font-size: 0.75rem;
+    color: var(--ink-3);
+    margin-bottom: 4px;
+}
+.kpi-tile-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.32rem;
+    font-weight: 700;
+    color: var(--ink-1);
+    line-height: 1.15;
+}
+.kpi-tile-sub {
+    font-size: 0.74rem;
+    color: var(--ink-2);
+    margin-top: 3px;
+}
+
+/* Confusion Matrix Panels */
+.cm-card {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.cm-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--ink-1);
+    margin-bottom: 8px;
+}
+.cm-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 5px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+}
+.cm-table th {
+    color: var(--ink-3);
+    font-weight: 500;
+    text-align: left;
+    padding: 3px 6px;
+}
+.cm-table td {
+    padding: 7px 9px;
+    border-radius: 5px;
+    text-align: center;
+    font-weight: 600;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+    .hud-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero-metrics, .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .flow-grid { grid-template-columns: 1fr; }
+}
+</style>
+""",
     unsafe_allow_html=True,
 )
 
@@ -462,6 +606,32 @@ def load_app_data() -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     return cfg, preds_df, hist_df
 
 
+@st.cache_data
+def load_calibration_oof() -> pd.DataFrame | None:
+    """Load out-of-fold calibrated probabilities for live reliability plotting."""
+    cal_path = root_dir / "data/processed/calibrated_oof.parquet"
+    if not cal_path.exists():
+        return None
+    return load_parquet(cal_path)
+
+
+def _slice_history_for_split(all_hist: pd.DataFrame, split_key: str) -> pd.DataFrame:
+    """Isolate CDM history strictly to the selected cohort split.
+
+    Production cdm_history.parquet concatenates train/val CDMs followed by
+    test_merged CDMs (where event_id resets from ~13153 back to 0). Slicing
+    at that boundary prevents the 405 colliding event_ids between val and test
+    from merging into a single jagged trajectory.
+    """
+    drops = all_hist.index[all_hist["event_id"].diff() < 0].tolist()
+    if not drops:
+        return all_hist
+    boundary = int(drops[0])
+    if split_key == "test":
+        return all_hist.iloc[boundary:]
+    return all_hist.iloc[:boundary]
+
+
 def _navigate_to(page: str, event_id: int | None = None) -> None:
     """Switch active page and optionally focus a specific event_id."""
     st.session_state["active_page"] = page
@@ -473,7 +643,7 @@ def _navigate_to(page: str, event_id: int | None = None) -> None:
 
 
 def _notable_events(split_preds: pd.DataFrame) -> dict[str, int | None]:
-    """Find representative notable encounters in the active split."""
+    """Find flagship rescued, avoided-burn, and highest-risk encounters."""
     rescued = split_preds[
         (split_preds["recommendation"] == "MANOEUVRE")
         & (split_preds["baseline_recommendation"] != "MANOEUVRE")
@@ -495,229 +665,420 @@ def _notable_events(split_preds: pd.DataFrame) -> dict[str, int | None]:
     }
 
 
+def _build_risk_trajectory_figure(
+    event_row: pd.Series,
+    event_history: pd.DataFrame,
+    high_risk_thresh: float,
+    cutoff_days: float,
+    reveal_gt: bool,
+    height: int = 370,
+    compact_legend: bool = False,
+) -> go.Figure:
+    """Build a crisp, overlap-free Plotly collision risk trajectory chart."""
+    vis_cdms = event_history[event_history["visible"]].sort_values("time_to_tca", ascending=False)
+    post_cdms = event_history[~event_history["visible"]].sort_values("time_to_tca", ascending=False)
+
+    all_y = list(vis_cdms["log_risk"].values) + [float(event_row["pred_final_log_risk"]), high_risk_thresh]
+    if reveal_gt and len(post_cdms) > 0:
+        all_y.extend(list(post_cdms["log_risk"].values))
+    if reveal_gt:
+        all_y.append(float(event_row["actual_final_log_risk"]))
+
+    y_min_data = float(np.nanmin(all_y)) if all_y else -30.0
+    y_max_data = float(np.nanmax(all_y)) if all_y else -2.0
+    y_low = max(-31.5, min(y_min_data - 2.2, high_risk_thresh - 4.5))
+    y_high = min(0.5, max(y_max_data + 1.8, high_risk_thresh + 2.8))
+
+    max_x = float(max(7.0, event_history["time_to_tca"].max() + 0.35)) if len(event_history) else 7.2
+
+    fig = go.Figure()
+
+    # Shaded Blind Zone (< cutoff_days)
+    fig.add_vrect(
+        x0=cutoff_days,
+        x1=0.0,
+        fillcolor="rgba(244, 63, 94, 0.10)",
+        layer="below",
+        line_width=0,
+    )
+    fig.add_vline(
+        x=cutoff_days,
+        line_dash="dash",
+        line_color="#F59E0B",
+        line_width=2,
+    )
+    fig.add_hline(
+        y=high_risk_thresh,
+        line_dash="dot",
+        line_color="rgba(245, 158, 11, 0.85)",
+        line_width=1.5,
+    )
+
+    # Non-overlapping annotations anchored cleanly to margins/blind zone
+    fig.add_annotation(
+        x=cutoff_days * 0.5,
+        y=0.98,
+        yref="paper",
+        yanchor="top",
+        text="Blind Zone (<48h)",
+        showarrow=False,
+        font=dict(color="#FDA4AF", size=10, family="IBM Plex Mono"),
+        bgcolor="rgba(11, 14, 20, 0.72)",
+        borderpad=3,
+    )
+    fig.add_annotation(
+        x=cutoff_days,
+        y=0.03,
+        yref="paper",
+        yanchor="bottom",
+        xanchor="right",
+        xshift=-6,
+        text="T-48h Cutoff",
+        showarrow=False,
+        font=dict(color="#FCD34D", size=10, family="IBM Plex Mono"),
+        bgcolor="rgba(11, 14, 20, 0.82)",
+        borderpad=3,
+    )
+    # Keep alert label clear of the Blind Zone top badge on deep-plunge trajectories
+    alert_near_top = (y_high - high_risk_thresh) < 0.24 * max(1.0, (y_high - y_low))
+    fig.add_annotation(
+        x=0.99,
+        xref="paper",
+        xanchor="right",
+        y=high_risk_thresh,
+        yshift=-12 if alert_near_top else 11,
+        text=f"1 in 1M Alert ({high_risk_thresh:.1f})",
+        showarrow=False,
+        font=dict(color="#FCD34D", size=10, family="IBM Plex Mono"),
+        bgcolor="rgba(11, 14, 20, 0.85)",
+        borderpad=3,
+    )
+
+    # Observable pre-cutoff CDMs
+    if len(vis_cdms) > 0:
+        fig.add_trace(
+            go.Scatter(
+                x=vis_cdms["time_to_tca"],
+                y=vis_cdms["log_risk"],
+                mode="lines+markers",
+                name="Pre-cutoff CDMs",
+                line=dict(color="#38BDF8", width=2.5),
+                marker=dict(size=7, color="#38BDF8", line=dict(width=1, color="#0B0E14")),
+                hovertemplate="T-%{x:.2f}d<br>Observed log risk: %{y:.2f}<extra></extra>",
+            )
+        )
+
+    # NearMiss predicted final risk at TCA
+    fig.add_trace(
+        go.Scatter(
+            x=[0.0],
+            y=[float(event_row["pred_final_log_risk"])],
+            mode="markers",
+            name=f"NearMiss forecast ({event_row['pred_final_log_risk']:.2f})",
+            marker=dict(
+                size=12,
+                color="#A78BFA",
+                symbol="diamond",
+                line=dict(width=1.5, color="#F8FAFC"),
+            ),
+            hovertemplate="NearMiss TCA forecast: %{y:.2f}<extra></extra>",
+        )
+    )
+
+    # Post-cutoff ground truth reveal
+    if reveal_gt:
+        if len(post_cdms) > 0:
+            # Connect last visible CDM to post-cutoff track seamlessly
+            if len(vis_cdms) > 0:
+                bridge = pd.concat([vis_cdms.iloc[[-1]], post_cdms], ignore_index=True)
+            else:
+                bridge = post_cdms
+            fig.add_trace(
+                go.Scatter(
+                    x=bridge["time_to_tca"],
+                    y=bridge["log_risk"],
+                    mode="lines+markers",
+                    name="Actual blind-zone track",
+                    line=dict(color="#F59E0B", width=2.2, dash="dash"),
+                    marker=dict(size=7, color="#F59E0B", symbol="circle-open", line=dict(width=2, color="#F59E0B")),
+                    hovertemplate="T-%{x:.2f}d<br>Actual log risk: %{y:.2f}<extra></extra>",
+                )
+            )
+        actual_val = float(event_row["actual_final_log_risk"])
+        fig.add_trace(
+            go.Scatter(
+                x=[0.0],
+                y=[actual_val],
+                mode="markers",
+                name=f"Actual TCA ({actual_val:.2f})",
+                marker=dict(
+                    size=11,
+                    color="#F43F5E" if actual_val >= high_risk_thresh else "#10B981",
+                    symbol="star",
+                    line=dict(width=1, color="#F8FAFC"),
+                ),
+                hovertemplate="Actual final log risk: %{y:.2f}<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        xaxis=dict(
+            title="Days remaining until closest approach (TCA)",
+            range=[max_x, -0.25],
+            gridcolor="rgba(255,255,255,0.06)",
+            zeroline=False,
+            color="#94A3B8",
+            title_font=dict(size=11, family="IBM Plex Sans"),
+        ),
+        yaxis=dict(
+            title="Collision risk log10(P)",
+            range=[y_low, y_high],
+            gridcolor="rgba(255,255,255,0.06)",
+            zeroline=False,
+            color="#94A3B8",
+            title_font=dict(size=11, family="IBM Plex Sans"),
+        ),
+        paper_bgcolor="#121722",
+        plot_bgcolor="#0D1119",
+        font=dict(family="IBM Plex Sans", color="#CBD5E1"),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.22 if not compact_legend else -0.25,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10.5, color="#CBD5E1"),
+        ),
+        height=height,
+        margin=dict(l=58, r=16, t=14, b=74),
+        hovermode="closest",
+    )
+    return fig
+
+
 # -----------------------------------------------------------------------------
-# PAGE RENDERERS
+# PAGE 1: OVERVIEW (MISSION BRIEFING LANDING PAGE)
 # -----------------------------------------------------------------------------
-def render_overview(split_preds: pd.DataFrame, split_label: str, cutoff_days: float) -> None:
-    """Render the Mission Briefing landing page."""
-    st.markdown(
-        f"""
-        <div class='hero-panel'>
-            <div class='hero-title'>
-                Autonomous Collision Avoidance<br>
-                <span class='hero-accent'>Before the {cutoff_days:.0f}-Day Decision Horizon</span>
-            </div>
-            <p class='hero-copy'>
-                Satellite operators receive hundreds of Conjunction Data Messages (CDMs) every week, yet planning
-                and uplinking an avoidance burn takes <strong>24 to 48 hours</strong>. Once an encounter crosses
-                <strong>T-48h</strong>, operators enter the <strong>Blind Zone</strong> where late radar updates arrive too late to act.
-                NearMiss forecasts terminal collision risk strictly from early tracking data—catching late-jumping hazards
-                while eliminating costly false-alarm burns.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    cta1, cta2, cta3, _ = st.columns([1.1, 1.1, 1.1, 2.2])
-    with cta1:
-        if st.button("Inspect Encounters", type="primary", use_container_width=True, key="hero_cta_inspect"):
-            _navigate_to("Event Inspector")
-            st.rerun()
-    with cta2:
-        if st.button("Simulate Burn Policy", type="secondary", use_container_width=True, key="hero_cta_sim"):
-            _navigate_to("Policy Simulator")
-            st.rerun()
-    with cta3:
-        if st.button("View ESA Benchmarks", type="secondary", use_container_width=True, key="hero_cta_bench"):
-            _navigate_to("Benchmarks & Physics")
-            st.rerun()
-
-    # Live Telemetry KPIs
-    n_total = len(split_preds)
-    n_man = int((split_preds["recommendation"] == "MANOEUVRE").sum())
-    n_danger = int(split_preds["actual_high_risk"].sum())
-    man_pct = (n_man / max(1, n_total)) * 100
-    danger_pct = (n_danger / max(1, n_total)) * 100
-
-    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.markdown(
-            f"""
-            <div class='kpi-card'>
-                <div class='kpi-label'>Monitored Encounters</div>
-                <div class='kpi-val'>{n_total:,}</div>
-                <div class='kpi-sub'>{split_label}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with k2:
-        st.markdown(
-            f"""
-            <div class='kpi-card'>
-                <div class='kpi-label'>Maneuvers Commanded</div>
-                <div class='kpi-val' style='color:#FB7185;'>{n_man:,}</div>
-                <div class='kpi-sub'>{man_pct:.1f}% burn recommendation rate</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with k3:
-        st.markdown(
-            f"""
-            <div class='kpi-card'>
-                <div class='kpi-label'>Confirmed Hazards</div>
-                <div class='kpi-val' style='color:#FBBF24;'>{n_danger:,}</div>
-                <div class='kpi-sub'>{danger_pct:.1f}% actual terminal risk ≥ 10⁻⁶</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with k4:
-        st.markdown(
-            f"""
-            <div class='kpi-card'>
-                <div class='kpi-label'>Decision Lead Time</div>
-                <div class='kpi-val' style='color:#22D3EE;'>≥ {cutoff_days * 24:.0f} h</div>
-                <div class='kpi-sub'>Zero blind-zone data leakage</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # 4-Step Architecture Flow
-    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-head'>How NearMiss Operates</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='section-sub'>End-to-end orbital risk pipeline enforced under strict T-48h cutoff isolation.</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
-        <div class='pipe-grid'>
-            <div class='pipe-card'>
-                <div class='pipe-tag'>01 · INGESTION</div>
-                <div class='pipe-title'>Early Radar Passes</div>
-                <div class='pipe-desc'>Collects Conjunction Data Messages (CDMs) from T-7d up to the planning deadline, tracking miss distance and covariance evolution.</div>
-            </div>
-            <div class='pipe-card cutoff'>
-                <div class='pipe-tag'>02 · T-48H BARRIER</div>
-                <div class='pipe-title'>Strict Cutoff Isolation</div>
-                <div class='pipe-desc'>Discards every CDM inside 2.0 days to TCA. No model or feature ever sees blind-zone updates before issuing a decision.</div>
-            </div>
-            <div class='pipe-card physics'>
-                <div class='pipe-tag'>03 · ORBITAL PHYSICS</div>
-                <div class='pipe-title'>73 Covariance Features</div>
-                <div class='pipe-desc'>Computes 3D uncertainty ellipsoid volumes √det(C), contraction ratios, combined RTN sigmas, and miss-distance gradients.</div>
-            </div>
-            <div class='pipe-card calib'>
-                <div class='pipe-tag'>04 · CALIBRATION</div>
-                <div class='pipe-title'>Platt Risk & Confidence</div>
-                <div class='pipe-desc'>Converts raw ensemble scores into calibrated collision probabilities (-59.5% Brier error) with HIGH / MEDIUM / LOW confidence tiers.</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Verified Outcomes + Interactive Case Studies
-    st.markdown("<div class='section-head'>Operational Impact & Featured Encounters</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='section-sub'>Compare NearMiss against legacy Persistence (Baseline A) or jump directly into real conjunction trajectories.</div>",
-        unsafe_allow_html=True,
-    )
-
-    notable = _notable_events(split_preds)
-    col_l, col_r = st.columns(2)
-
-    with col_l:
-        st.markdown(
-            """
-            <div class='info-card'>
-                <div class='info-card-title' style='color:#22D3EE;'>22.6% Fewer Unnecessary Burns</div>
-                <div class='info-card-body'>
-                    Legacy persistence triggers false alarms whenever early tracking noise temporarily spikes collision probability.
-                    NearMiss recognizes expanding covariance volumes and diverging miss distances to stand down safely—saving up to USD 50,000 per avoided burn.
-                </div>
-            </div>
-            <div class='info-card'>
-                <div class='info-card-title' style='color:#34D399;'>59.5% Probability Calibration Error Reduction</div>
-                <div class='info-card-body'>
-                    Under a ~0.8% high-risk base rate, raw tree scores are heavily skewed. Out-of-fold Platt scaling lowers Brier error
-                    from <strong>0.01724 to 0.00698</strong>, giving flight dynamics teams reliable posterior probabilities.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col_r:
-        rescued_id = notable["rescued"]
-        avoided_id = notable["avoided"]
-
-        st.markdown(
-            f"""
-            <div class='info-card'>
-                <div class='info-card-title' style='color:#FB7185;'>Rescued Late-Jumping Collision</div>
-                <div class='info-card-body'>
-                    Baseline A cleared Encounter <strong>#{rescued_id if rescued_id is not None else 'N/A'}</strong> as safe at T-48h.
-                    NearMiss detected rapid covariance contraction and commanded an avoidance burn before the blind zone.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if rescued_id is not None and st.button(
-            f"Inspect Rescued Event #{rescued_id}",
-            key="overview_jump_rescued",
-            use_container_width=True,
-        ):
-            _navigate_to("Event Inspector", rescued_id)
-            st.rerun()
-
-        st.markdown(
-            f"""
-            <div class='info-card' style='margin-top:10px;'>
-                <div class='info-card-title' style='color:#FBBF24;'>Avoided False-Alarm Burn</div>
-                <div class='info-card-body'>
-                    Baseline A ordered a costly maneuver on Encounter <strong>#{avoided_id if avoided_id is not None else 'N/A'}</strong>.
-                    NearMiss identified transient early uncertainty and cleared the orbit without wasting propellant.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if avoided_id is not None and st.button(
-            f"Inspect Saved-Burn Event #{avoided_id}",
-            key="overview_jump_avoided",
-            use_container_width=True,
-        ):
-            _navigate_to("Event Inspector", avoided_id)
-            st.rerun()
-
-
-def render_inspector(
+def render_overview(
     split_preds: pd.DataFrame,
-    all_hist: pd.DataFrame,
+    split_hist: pd.DataFrame,
+    split_label: str,
     high_risk_thresh: float,
     cutoff_days: float,
 ) -> None:
-    """Render the Conjunction Event Inspector."""
-    st.markdown("<div class='section-head'>Conjunction Event Inspector</div>", unsafe_allow_html=True)
+    """Render the Mission Briefing landing page with a live interactive Hero."""
+    notable = _notable_events(split_preds)
+    rescued_id = notable["rescued"]
+    avoided_id = notable["avoided"]
+
+    hero_l, hero_r = st.columns([1.15, 1.0], gap="large", vertical_alignment="top")
+
+    with hero_l:
+        st.markdown(
+            f"""
+<div class='hero-headline'>Predict satellite collisions {cutoff_days*24:.0f} hours before closest approach.</div>
+<p class='hero-lead'>
+Mission planners need 24 to 48 hours to design and uplink an orbital avoidance burn.
+Once an encounter crosses <strong>T-{cutoff_days*24:.0f}h</strong>, late radar updates arrive inside the
+<strong>Blind Zone</strong>—too late to act. NearMiss forecasts terminal collision risk strictly from
+early tracking passes using 73 orbital covariance physics features, catching late-jumping hazards while
+cutting unnecessary fuel burns.
+</p>
+<div class='hero-metrics'>
+    <div class='hm-cell'>
+        <div class='hm-val'>14,109</div>
+        <div class='hm-lbl'>ESA conjunctions evaluated</div>
+    </div>
+    <div class='hm-cell'>
+        <div class='hm-val' style='color:#38BDF8;'>{cutoff_days*24:.0f}h</div>
+        <div class='hm-lbl'>Strict advance decision horizon</div>
+    </div>
+    <div class='hm-cell'>
+        <div class='hm-val' style='color:#10B981;'>-59.5%</div>
+        <div class='hm-lbl'>Probability calibration error</div>
+    </div>
+    <div class='hm-cell'>
+        <div class='hm-val' style='color:#F59E0B;'>-22.6%</div>
+        <div class='hm-lbl'>Avoidable burns cut (OOF)</div>
+    </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        act1, act2 = st.columns([1.1, 1.0], gap="small")
+        with act1:
+            if st.button("Open Event Inspector", type="primary", width="stretch", key="hero_open_inspector"):
+                _navigate_to("Event Inspector", rescued_id or notable["top_risk"])
+                st.rerun()
+        with act2:
+            if st.button("Simulate Burn Policy", type="secondary", width="stretch", key="hero_open_sim"):
+                _navigate_to("Policy Simulator")
+                st.rerun()
+
+    with hero_r:
+        showcase_options = []
+        if avoided_id is not None:
+            showcase_options.append(f"Avoided False Alarm #{avoided_id}")
+        if rescued_id is not None:
+            showcase_options.append(f"Caught Late Collision #{rescued_id}")
+        if not showcase_options and notable["top_risk"] is not None:
+            showcase_options.append(f"Top Risk Event #{notable['top_risk']}")
+
+        selected_showcase = st.segmented_control(
+            "Live showcase encounter",
+            options=showcase_options,
+            default=showcase_options[0],
+            selection_mode="single",
+            label_visibility="collapsed",
+            width="stretch",
+            key=f"hero_showcase_{split_label}",
+        )
+        if not selected_showcase:
+            selected_showcase = showcase_options[0]
+
+        show_eid = int(selected_showcase.split("#")[-1])
+        show_row = split_preds[split_preds["event_id"] == show_eid].iloc[0]
+        show_hist = split_hist[split_hist["event_id"] == show_eid]
+
+        is_rescued_view = "Caught" in selected_showcase
+        caption_color = "#FDA4AF" if is_rescued_view else "#6EE7B7"
+        caption_txt = (
+            f"Baseline A stood down at T-48h ({show_row['latest_log_risk']:.2f}), missing the jump to {show_row['actual_final_log_risk']:.2f}. NearMiss commanded a burn early."
+            if is_rescued_view
+            else f"Baseline A alarmed at T-48h ({show_row['latest_log_risk']:.2f}), but risk fell safely to {show_row['actual_final_log_risk']:.2f}. NearMiss saved the burn."
+        )
+        st.markdown(
+            f"<div style='font-size:0.8rem; color:{caption_color}; margin-bottom:4px; line-height:1.4;'>{caption_txt}</div>",
+            unsafe_allow_html=True,
+        )
+
+        fig_hero = _build_risk_trajectory_figure(
+            event_row=show_row,
+            event_history=show_hist,
+            high_risk_thresh=high_risk_thresh,
+            cutoff_days=cutoff_days,
+            reveal_gt=True,
+            height=305,
+            compact_legend=True,
+        )
+        st.plotly_chart(fig_hero, width="stretch", config={"displayModeBar": False})
+
+    # 3-Step Pipeline Architecture
     st.markdown(
-        "<div class='section-sub'>Audit individual trajectories, compare NearMiss against Baseline A at T-48h, and toggle post-cutoff ground truth.</div>",
+        """
+<div class='section-title'>How NearMiss decides before the blind zone</div>
+<div class='section-desc'>Every feature, split, and calibrator strictly respects the 48-hour operational barrier with zero future leakage.</div>
+<div class='flow-grid'>
+    <div class='flow-step'>
+        <div class='flow-step-title'>1. Early Radar Intake (T-7d to T-2d)</div>
+        <div class='flow-step-body'>
+            Ingests Conjunction Data Messages (CDMs) up to the planning deadline and discards every observation
+            inside 48 hours to closest approach before features are computed.
+        </div>
+    </div>
+    <div class='flow-step gold'>
+        <div class='flow-step-title'>2. Orbital Covariance Physics</div>
+        <div class='flow-step-body'>
+            Extracts 73 domain features capturing 3D uncertainty ellipsoid volume √det(C), contraction rate across passes,
+            combined RTN positional sigmas, and miss-distance velocity gradients.
+        </div>
+    </div>
+    <div class='flow-step green'>
+        <div class='flow-step-title'>3. Calibrated Probability & Confidence</div>
+        <div class='flow-step-body'>
+            Applies out-of-fold Platt scaling to transform balanced Random Forest scores into trustworthy collision
+            probabilities (Brier 0.0166 → 0.0068) paired with High, Medium, or Low confidence tiers.
+        </div>
+    </div>
+</div>
+""",
         unsafe_allow_html=True,
     )
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1.8])
-    with c1:
+    # Curated Case Studies (Real live rows from active split)
+    st.markdown(
+        f"""
+<div class='section-title'>Verified encounters in {split_label}</div>
+<div class='section-desc'>Direct head-to-head disagreements where NearMiss improved on legacy Persistence (Baseline A).</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    c_left, c_right = st.columns(2, gap="medium")
+
+    with c_left:
+        if rescued_id is not None:
+            r_row = split_preds[split_preds["event_id"] == rescued_id].iloc[0]
+            st.markdown(
+                f"""
+<div class='case-panel'>
+    <div class='case-head'>
+        <div class='case-title'>Late-Jumping Collision Caught — Event #{rescued_id}</div>
+        <span class='case-tag'>Rescued</span>
+    </div>
+    <div class='case-body'>
+        At T-48h, the latest radar pass sat just beneath the alert line, causing legacy Persistence to clear the
+        encounter. NearMiss detected tightening covariance geometry and triggered an early avoidance burn.
+    </div>
+    <div class='case-compare'>
+        <div><span style='color:#8B98B0;'>Baseline A</span><br><strong style='color:#94A3B8;'>Stand Down</strong></div>
+        <div><span style='color:#8B98B0;'>NearMiss</span><br><strong style='color:#FDA4AF;'>Burn ({r_row['high_risk_prob']:.1%})</strong></div>
+        <div><span style='color:#8B98B0;'>Actual TCA</span><br><strong style='color:#F59E0B;'>{r_row['actual_final_log_risk']:.2f} (Danger)</strong></div>
+    </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Inspect Rescued Event #{rescued_id}", width="stretch", key="ov_btn_rescued"):
+                _navigate_to("Event Inspector", rescued_id)
+                st.rerun()
+
+    with c_right:
+        if avoided_id is not None:
+            a_row = split_preds[split_preds["event_id"] == avoided_id].iloc[0]
+            st.markdown(
+                f"""
+<div class='case-panel saved'>
+    <div class='case-head'>
+        <div class='case-title'>Costly False Alarm Prevented — Event #{avoided_id}</div>
+        <span class='case-tag saved'>Burn Saved</span>
+    </div>
+    <div class='case-body'>
+        Early tracking noise briefly pushed collision risk above the maneuver line, triggering a fuel-wasting burn
+        under Persistence. NearMiss recognized transient uncertainty and safely cleared the orbit.
+    </div>
+    <div class='case-compare'>
+        <div><span style='color:#8B98B0;'>Baseline A</span><br><strong style='color:#FDA4AF;'>Order Burn</strong></div>
+        <div><span style='color:#8B98B0;'>NearMiss</span><br><strong style='color:#6EE7B7;'>Stand Down ({a_row['high_risk_prob']:.1%})</strong></div>
+        <div><span style='color:#8B98B0;'>Actual TCA</span><br><strong style='color:#10B981;'>{a_row['actual_final_log_risk']:.2f} (Safe)</strong></div>
+    </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Inspect Avoided-Burn Event #{avoided_id}", width="stretch", key="ov_btn_avoided"):
+                _navigate_to("Event Inspector", avoided_id)
+                st.rerun()
+
+
+# -----------------------------------------------------------------------------
+# PAGE 2: EVENT INSPECTOR
+# -----------------------------------------------------------------------------
+def render_inspector(
+    split_preds: pd.DataFrame,
+    split_hist: pd.DataFrame,
+    high_risk_thresh: float,
+    cutoff_days: float,
+) -> None:
+    """Render the Conjunction Event Inspector with charts visible above the fold."""
+    # Compact single-row filter bar
+    f1, f2, f3, f4 = st.columns([0.95, 0.9, 0.95, 2.0], gap="small")
+    with f1:
         rec_filter = st.selectbox("Recommendation", ["All", "MANOEUVRE", "NO_MANOEUVRE"], key="rec_filter")
-    with c2:
+    with f2:
         conf_filter = st.selectbox("Confidence", ["All", "HIGH", "MEDIUM", "LOW"], key="conf_filter")
-    with c3:
-        search_query = st.text_input("Event ID Search", placeholder="e.g. 873, 193", key="search_query")
+    with f3:
+        search_query = st.text_input("Search Event ID", placeholder="e.g. 8776, 873", key="search_query")
 
     filtered = split_preds.copy()
     if rec_filter != "All":
@@ -728,32 +1089,32 @@ def render_inspector(
         try:
             filtered = filtered[filtered["event_id"] == int(search_query.strip())]
         except ValueError:
-            st.warning("Event ID must be an integer (e.g. 873).")
+            st.warning("Enter a numeric Event ID (for example, 8776 or 873).")
 
     filtered = filtered.sort_values("high_risk_prob", ascending=False)
 
-    with c4:
+    with f4:
         if len(filtered) == 0:
-            st.selectbox("Select Encounter (0 matches)", ["No matching encounters"], disabled=True)
+            st.selectbox("Encounter (0 matches)", ["No matching encounters"], disabled=True)
         else:
             event_options = filtered["event_id"].tolist()
-            # Keep session_state selection valid when switching cohorts or filters
             if st.session_state.get("selected_event_id") not in event_options:
                 st.session_state["selected_event_id"] = event_options[0]
 
             lookup = filtered.set_index("event_id")
             selected_event_id = st.selectbox(
-                f"Select Encounter ({len(filtered):,} matches)",
+                f"Select Encounter ({len(filtered):,} matching, sorted by collision probability)",
                 event_options,
                 key="selected_event_id",
                 format_func=lambda eid: (
-                    f"#{eid} · P={lookup.loc[eid, 'high_risk_prob']:.1%} · "
-                    f"{lookup.loc[eid, 'recommendation']} [{lookup.loc[eid, 'confidence']}]"
+                    f"Event #{eid} — P={lookup.loc[eid, 'high_risk_prob']:.1%} "
+                    f"({lookup.loc[eid, 'recommendation'].replace('_', ' ').title()}, "
+                    f"{lookup.loc[eid, 'confidence'].title()})"
                 ),
             )
 
     if len(filtered) == 0:
-        st.info("No conjunctions match your current filter combination.")
+        st.info("No conjunctions match the active filter combination.")
         if st.button("Reset Filters", type="primary"):
             st.session_state["rec_filter"] = "All"
             st.session_state["conf_filter"] = "All"
@@ -762,306 +1123,244 @@ def render_inspector(
         return
 
     event_row = split_preds[split_preds["event_id"] == selected_event_id].iloc[0]
-    conf = str(event_row["confidence"]).upper()
-    conf_class = f"conf-{conf.lower()[:3]}"
+    conf_raw = str(event_row["confidence"]).upper()
+    conf_class = {"HIGH": "conf-high", "MEDIUM": "conf-medium", "LOW": "conf-low"}.get(conf_raw, "conf-low")
     is_manoeuvre = event_row["recommendation"] == "MANOEUVRE"
-    b_rec = event_row["baseline_recommendation"]
+    b_is_man = event_row["baseline_recommendation"] == "MANOEUVRE"
 
-    rec_html = (
-        "<div class='badge-burn'>COMMAND AVOIDANCE BURN</div>"
-        if is_manoeuvre
-        else "<div class='badge-safe'>NOMINAL ORBIT · STAND DOWN</div>"
-    )
-    b_rec_html = (
-        "<span style='color:#FB7185; font-weight:800;'>COMMAND BURN</span>"
-        if b_rec == "MANOEUVRE"
-        else "<span style='color:#34D399; font-weight:800;'>STAND DOWN</span>"
-    )
-    divergence = (
-        "AGREEMENT"
-        if is_manoeuvre == (b_rec == "MANOEUVRE")
-        else ("RESCUED COLLISION" if is_manoeuvre else "SAVED MANEUVER")
-    )
-    div_color = "#94A3B8" if divergence == "AGREEMENT" else ("#22D3EE" if divergence == "RESCUED COLLISION" else "#34D399")
+    hud_mod = "" if is_manoeuvre else "safe"
+    verdict_color = "#FDA4AF" if is_manoeuvre else "#6EE7B7"
+    verdict_text = "Command Avoidance Burn" if is_manoeuvre else "Stand Down — Nominal Orbit"
 
+    b_color = "#FDA4AF" if b_is_man else "#6EE7B7"
+    b_text = "Order Burn" if b_is_man else "Stand Down"
+
+    if is_manoeuvre == b_is_man:
+        div_label = "Agreement"
+        div_color = "#94A3B8"
+        div_sub = "Matches persistence"
+    elif is_manoeuvre:
+        div_label = "Caught Early"
+        div_color = "#38BDF8"
+        div_sub = "Baseline stood down"
+    else:
+        div_label = "Burn Saved"
+        div_color = "#10B981"
+        div_sub = "Baseline alarmed"
+
+    # Compact Single-Row Decision HUD
     st.markdown(
         f"""
-        <div class='hud-panel'>
-            <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;'>
-                <div>
-                    <div style='font-size:0.75rem; text-transform:uppercase; color:#94A3B8; font-weight:700; margin-bottom:8px;'>
-                        Encounter #{selected_event_id} · Chaser Type: {event_row['object_type']}
-                    </div>
-                    {rec_html}
-                </div>
-                <div style='display:flex; flex-direction:column; align-items:flex-end; gap:6px;'>
-                    <div style='display:flex; align-items:center; gap:8px;'>
-                        <span style='font-size:0.8rem; color:#94A3B8;'>Confidence:</span>
-                        <span class='conf-pill {conf_class}'>{conf}</span>
-                    </div>
-                    <div style='font-size:0.8rem; color:#CBD5E1;'>
-                        Target: <strong>Sat #{event_row['mission_id']}</strong> · Pre-Cutoff Passes: <strong style='color:#22D3EE;'>{int(event_row['cdm_count_pre_cutoff'])} CDMs</strong>
-                    </div>
-                </div>
-            </div>
-            <div class='hud-grid'>
-                <div>
-                    <div class='kpi-label'>Calibrated P(Collision)</div>
-                    <div class='mono' style='font-size:1.45rem; font-weight:800; color:#F8FAFC;'>{event_row['high_risk_prob']:.2%}</div>
-                    <div style='font-size:0.76rem; color:#94A3B8;'>Platt scaled posterior</div>
-                </div>
-                <div>
-                    <div class='kpi-label'>Predicted Terminal Risk</div>
-                    <div class='mono' style='font-size:1.45rem; font-weight:800; color:#22D3EE;'>{event_row['pred_final_log_risk']:.2f}</div>
-                    <div style='font-size:0.76rem; color:#94A3B8;'>log10(P) hurdle estimate</div>
-                </div>
-                <div>
-                    <div class='kpi-label'>Baseline A (Persistence)</div>
-                    <div class='mono' style='font-size:1.1rem; margin-top:4px;'>{b_rec_html}</div>
-                    <div style='font-size:0.76rem; color:#94A3B8;'>Last visible: {event_row['latest_log_risk']:.2f}</div>
-                </div>
-                <div>
-                    <div class='kpi-label'>Policy Divergence</div>
-                    <div class='mono' style='font-size:1.05rem; font-weight:800; color:{div_color}; margin-top:4px;'>{divergence}</div>
-                    <div style='font-size:0.76rem; color:#94A3B8;'>NearMiss vs Baseline A</div>
-                </div>
-            </div>
+<div class='hud-strip {hud_mod}'>
+    <div>
+        <div class='verdict-row'>
+            <span class='verdict-title' style='color:{verdict_color};'>{verdict_text}</span>
+            <span class='conf-pill {conf_class}'>{conf_raw.title()} Confidence</span>
         </div>
-        """,
+        <div class='verdict-meta'>
+            Event #{selected_event_id} &nbsp;|&nbsp; Satellite #{int(event_row['mission_id'])} vs {event_row['object_type'].title()} &nbsp;|&nbsp; {int(event_row['cdm_count_pre_cutoff'])} pre-cutoff CDMs
+        </div>
+    </div>
+    <div class='hud-cell'>
+        <div class='hud-label'>Calibrated Risk Odds</div>
+        <div class='hud-val'>{event_row['high_risk_prob']:.2%}</div>
+        <div class='hud-sub'>Platt posterior probability</div>
+    </div>
+    <div class='hud-cell'>
+        <div class='hud-label'>Forecast TCA Risk</div>
+        <div class='hud-val' style='color:#38BDF8;'>{event_row['pred_final_log_risk']:.2f}</div>
+        <div class='hud-sub'>log10(P) hurdle estimate</div>
+    </div>
+    <div class='hud-cell'>
+        <div class='hud-label'>Baseline A (Persistence)</div>
+        <div class='hud-val' style='color:{b_color}; font-size:1.02rem;'>{b_text}</div>
+        <div class='hud-sub'>Last visible: {event_row['latest_log_risk']:.2f}</div>
+    </div>
+    <div class='hud-cell'>
+        <div class='hud-label'>Policy Comparison</div>
+        <div class='hud-val' style='color:{div_color}; font-size:1.02rem;'>{div_label}</div>
+        <div class='hud-sub'>{div_sub}</div>
+    </div>
+</div>
+""",
         unsafe_allow_html=True,
     )
 
-    reveal_gt = st.toggle("Reveal Post-Cutoff Ground Truth (Blind-Zone Simulation)", value=False)
-    if reveal_gt:
-        actual_risk_val = float(event_row["actual_final_log_risk"])
-        actual_danger = event_row["actual_high_risk"] == 1
-        outcome_color = "#FB7185" if actual_danger else "#34D399"
-        outcome_text = "ACTUAL COLLISION HAZARD (Risk ≥ 10⁻⁶)" if actual_danger else "ACTUAL NOMINAL FLYBY (Risk < 10⁻⁶)"
-        st.markdown(
-            f"""
-            <div style='background:#0F172A; border:1px solid {outcome_color}; border-radius:8px; padding:10px 14px; margin-bottom:14px; font-family:"JetBrains Mono",monospace; font-size:0.84rem;'>
-                Terminal TCA Log-Risk: <strong style='color:#F8FAFC;'>{actual_risk_val:.2f}</strong> &nbsp;|&nbsp;
-                <strong style='color:{outcome_color};'>{outcome_text}</strong>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    # Reveal toggle + inline outcome banner
+    tog_c1, tog_c2 = st.columns([1.15, 2.2], vertical_alignment="center")
+    with tog_c1:
+        reveal_gt = st.toggle("Reveal post-cutoff outcome (Blind Zone)", value=False, key="inspector_reveal_gt")
+    with tog_c2:
+        if reveal_gt:
+            actual_val = float(event_row["actual_final_log_risk"])
+            actual_danger = int(event_row["actual_high_risk"]) == 1
+            if actual_danger and is_manoeuvre:
+                tag_txt, tag_col = "True Positive — Hazard Caught", "#10B981"
+            elif not actual_danger and not is_manoeuvre:
+                tag_txt, tag_col = "True Negative — Safe Clearance", "#10B981"
+            elif actual_danger and not is_manoeuvre:
+                tag_txt, tag_col = "False Negative — Missed Hazard", "#F43F5E"
+            else:
+                tag_txt, tag_col = "False Positive — Precautionary Burn", "#F59E0B"
+            st.markdown(
+                f"<div style='background:#121722; border:1px solid {tag_col}; border-radius:6px; padding:6px 12px; font-size:0.82rem;'>"
+                f"<strong style='color:{tag_col};'>{tag_txt}</strong> &nbsp;|&nbsp; "
+                f"Actual terminal risk: <span class='mono' style='color:#F8FAFC;'>{actual_val:.2f}</span></div>",
+                unsafe_allow_html=True,
+            )
 
-    event_history = all_hist[all_hist["event_id"] == selected_event_id].sort_values("time_to_tca", ascending=False)
+    # Fetch split-isolated history (fixes 405-event ID collision sawtooth!)
+    event_history = split_hist[split_hist["event_id"] == selected_event_id].sort_values(
+        "time_to_tca", ascending=False
+    )
     vis_cdms = event_history[event_history["visible"]]
     post_cdms = event_history[~event_history["visible"]]
 
-    chart_c1, chart_c2 = st.columns([1.45, 1])
+    chart_c1, chart_c2 = st.columns([1.35, 1.0], gap="medium")
 
     with chart_c1:
-        st.markdown(f"**Collision Risk Trajectory — Encounter #{selected_event_id}**")
-        fig_risk = go.Figure()
-
-        fig_risk.add_vrect(
-            x0=cutoff_days,
-            x1=0.0,
-            fillcolor="#F43F5E",
-            opacity=0.09,
-            layer="below",
-            line_width=0,
+        st.markdown(f"<div style='font-weight:600; font-size:0.92rem; margin-bottom:2px;'>Collision Risk Trajectory (Event #{selected_event_id})</div>", unsafe_allow_html=True)
+        fig_risk = _build_risk_trajectory_figure(
+            event_row=event_row,
+            event_history=event_history,
+            high_risk_thresh=high_risk_thresh,
+            cutoff_days=cutoff_days,
+            reveal_gt=reveal_gt,
+            height=360,
         )
-        fig_risk.add_annotation(
-            x=cutoff_days / 2.0,
-            y=0.96,
-            yref="paper",
-            text="BLIND ZONE (< 2.0d)",
-            showarrow=False,
-            font=dict(color="#FDA4AF", size=10, family="JetBrains Mono"),
-        )
-        fig_risk.add_vline(
-            x=cutoff_days,
-            line_dash="dash",
-            line_color="#F43F5E",
-            line_width=2,
-        )
-        fig_risk.add_annotation(
-            x=cutoff_days,
-            y=0.06,
-            yref="paper",
-            text=" T-48h Cutoff",
-            xanchor="left",
-            showarrow=False,
-            font=dict(color="#FB7185", size=10, family="JetBrains Mono"),
-        )
-        fig_risk.add_hline(
-            y=high_risk_thresh,
-            line_dash="dot",
-            line_color="#FBBF24",
-            line_width=1.5,
-        )
-        fig_risk.add_annotation(
-            x=0.02,
-            xref="paper",
-            y=high_risk_thresh + 0.8,
-            text="1:1M Threshold (-6.0)",
-            xanchor="left",
-            showarrow=False,
-            font=dict(color="#FBBF24", size=10, family="JetBrains Mono"),
-        )
-
-        fig_risk.add_trace(
-            go.Scatter(
-                x=vis_cdms["time_to_tca"],
-                y=vis_cdms["log_risk"],
-                mode="lines+markers",
-                name="Observable CDMs (≥ 2.0d)",
-                line=dict(color="#22D3EE", width=2.5),
-                marker=dict(size=8, color="#22D3EE"),
-                hovertemplate="Time to TCA: %{x:.2f}d<br>Observed Risk: %{y:.2f}<extra></extra>",
-            )
-        )
-        fig_risk.add_trace(
-            go.Scatter(
-                x=[0.0],
-                y=[event_row["pred_final_log_risk"]],
-                mode="markers",
-                name=f"NearMiss Prediction ({event_row['pred_final_log_risk']:.2f})",
-                marker=dict(size=13, color="#818CF8", symbol="diamond", line=dict(width=1.5, color="#F8FAFC")),
-                hovertemplate="Predicted TCA Risk: %{y:.2f}<extra></extra>",
-            )
-        )
-        if reveal_gt and len(post_cdms) > 0:
-            fig_risk.add_trace(
-                go.Scatter(
-                    x=post_cdms["time_to_tca"],
-                    y=post_cdms["log_risk"],
-                    mode="lines+markers",
-                    name="Post-Cutoff Truth",
-                    line=dict(color="#FBBF24", width=2, dash="dash"),
-                    marker=dict(size=7, color="#FBBF24", symbol="triangle-down"),
-                    hovertemplate="Actual Time: %{x:.2f}d<br>Actual Risk: %{y:.2f}<extra></extra>",
-                )
-            )
-
-        fig_risk.update_layout(
-            xaxis=dict(title="Days Until TCA", autorange="reversed", gridcolor="#1E293B", color="#CBD5E1"),
-            yaxis=dict(title="Risk log10(P)", range=[-32, 0.5], gridcolor="#1E293B", color="#CBD5E1"),
-            paper_bgcolor="#0F172A",
-            plot_bgcolor="#090E1C",
-            legend=dict(
-                orientation="h",
-                yanchor="top",
-                y=-0.22,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=11, color="#CBD5E1"),
-            ),
-            height=410,
-            margin=dict(l=64, r=20, t=24, b=82),
-        )
-        st.plotly_chart(fig_risk, use_container_width=True)
+        st.plotly_chart(fig_risk, width="stretch", config={"displayModeBar": False})
 
     with chart_c2:
-        st.markdown("**Relative Miss Distance Profile**")
+        st.markdown("<div style='font-weight:600; font-size:0.92rem; margin-bottom:2px;'>Relative Miss Distance Across Passes</div>", unsafe_allow_html=True)
+        max_x = float(max(7.0, event_history["time_to_tca"].max() + 0.35)) if len(event_history) else 7.2
         fig_miss = go.Figure()
         fig_miss.add_vrect(
             x0=cutoff_days,
             x1=0.0,
-            fillcolor="#F43F5E",
-            opacity=0.07,
+            fillcolor="rgba(244, 63, 94, 0.08)",
             layer="below",
             line_width=0,
         )
-        fig_miss.add_vline(x=cutoff_days, line_dash="dash", line_color="#F43F5E", line_width=1.5)
-        fig_miss.add_trace(
-            go.Scatter(
-                x=vis_cdms["time_to_tca"],
-                y=vis_cdms["miss_distance"],
-                mode="lines+markers",
-                name="Observable Miss (m)",
-                line=dict(color="#34D399", width=2.5),
-                marker=dict(size=7, color="#34D399"),
-                hovertemplate="Time to TCA: %{x:.2f}d<br>Miss: %{y:,.0f} m<extra></extra>",
-            )
-        )
-        if reveal_gt and len(post_cdms) > 0:
+        fig_miss.add_vline(x=cutoff_days, line_dash="dash", line_color="#F59E0B", line_width=1.8)
+        if len(vis_cdms) > 0:
             fig_miss.add_trace(
                 go.Scatter(
-                    x=post_cdms["time_to_tca"],
-                    y=post_cdms["miss_distance"],
+                    x=vis_cdms["time_to_tca"],
+                    y=vis_cdms["miss_distance"],
                     mode="lines+markers",
-                    name="Post-Cutoff Truth",
-                    line=dict(color="#FBBF24", width=2, dash="dash"),
-                    marker=dict(size=6, color="#FBBF24"),
-                    hovertemplate="Actual Time: %{x:.2f}d<br>Actual Miss: %{y:,.0f} m<extra></extra>",
+                    name="Pre-cutoff miss distance",
+                    line=dict(color="#10B981", width=2.4),
+                    marker=dict(size=7, color="#10B981", line=dict(width=1, color="#0B0E14")),
+                    hovertemplate="T-%{x:.2f}d<br>Miss distance: %{y:,.0f} m<extra></extra>",
                 )
             )
-
+        if reveal_gt and len(post_cdms) > 0:
+            bridge_m = pd.concat([vis_cdms.iloc[[-1]], post_cdms], ignore_index=True) if len(vis_cdms) > 0 else post_cdms
+            fig_miss.add_trace(
+                go.Scatter(
+                    x=bridge_m["time_to_tca"],
+                    y=bridge_m["miss_distance"],
+                    mode="lines+markers",
+                    name="Blind-zone miss distance",
+                    line=dict(color="#F59E0B", width=2, dash="dash"),
+                    marker=dict(size=6, color="#F59E0B"),
+                    hovertemplate="T-%{x:.2f}d<br>Actual miss: %{y:,.0f} m<extra></extra>",
+                )
+            )
         fig_miss.update_layout(
-            xaxis=dict(title="Days Until TCA", autorange="reversed", gridcolor="#1E293B", color="#CBD5E1"),
-            yaxis=dict(title="Miss Distance (m)", gridcolor="#1E293B", color="#CBD5E1"),
-            paper_bgcolor="#0F172A",
-            plot_bgcolor="#090E1C",
+            xaxis=dict(
+                title="Days remaining until TCA",
+                range=[max_x, -0.25],
+                gridcolor="rgba(255,255,255,0.06)",
+                zeroline=False,
+                color="#94A3B8",
+                title_font=dict(size=11, family="IBM Plex Sans"),
+            ),
+            yaxis=dict(
+                title="Miss distance (meters)",
+                gridcolor="rgba(255,255,255,0.06)",
+                zeroline=False,
+                color="#94A3B8",
+                title_font=dict(size=11, family="IBM Plex Sans"),
+            ),
+            paper_bgcolor="#121722",
+            plot_bgcolor="#0D1119",
+            font=dict(family="IBM Plex Sans", color="#CBD5E1"),
             legend=dict(
                 orientation="h",
                 yanchor="top",
                 y=-0.22,
                 xanchor="center",
                 x=0.5,
-                font=dict(size=11, color="#CBD5E1"),
+                font=dict(size=10.5, color="#CBD5E1"),
             ),
-            height=410,
-            margin=dict(l=68, r=20, t=24, b=82),
+            height=360,
+            margin=dict(l=64, r=16, t=14, b=74),
+            hovermode="closest",
         )
-        st.plotly_chart(fig_miss, use_container_width=True)
+        st.plotly_chart(fig_miss, width="stretch", config={"displayModeBar": False})
 
-    with st.expander("CDM Telemetry Log", expanded=False):
+    with st.expander(f"CDM Telemetry Table ({len(event_history if reveal_gt else vis_cdms)} passes shown)", expanded=False):
         display_hist = event_history if reveal_gt else vis_cdms
         tbl = display_hist[["time_to_tca", "log_risk", "miss_distance", "visible"]].copy()
-        tbl.columns = ["Days to TCA", "Log10 Risk", "Miss Distance (m)", "Pre-Cutoff Visible"]
-        st.dataframe(tbl, use_container_width=True, hide_index=True)
+        tbl.columns = ["Days to TCA", "Log10 Risk", "Miss Distance (m)", "Visible Pre-Cutoff"]
+        st.dataframe(tbl, width="stretch", hide_index=True)
 
 
+# -----------------------------------------------------------------------------
+# PAGE 3: POLICY SIMULATOR
+# -----------------------------------------------------------------------------
 def render_simulator(split_preds: pd.DataFrame) -> None:
-    """Render the Constellation Mission Economics & Policy Simulator."""
-    st.markdown("<div class='section-head'>Constellation Mission Economics & Policy Simulator</div>", unsafe_allow_html=True)
+    """Render the Mission Economics & Decision Threshold Simulator."""
     st.markdown(
-        "<div class='section-sub'>Tune the probability decision threshold to balance catastrophic collision risk against propellant expenditure.</div>",
+        """
+<div class='section-title'>Decision Threshold & Mission Economics Simulator</div>
+<div class='section-desc'>Adjust the calibrated collision probability threshold to inspect missed hazards, fuel burns, and financial balance against Baseline A.</div>
+""",
         unsafe_allow_html=True,
     )
 
-    sim_c1, sim_c2 = st.columns([1, 1.75])
+    sim_l, sim_r = st.columns([1.0, 1.85], gap="large")
 
-    with sim_c1:
-        st.markdown("#### 1. Mission Profile")
-        # Avoid '$' signs in radio labels so Streamlit does not trigger KaTeX math mode
-        preset = st.radio(
-            "Mission Profile",
-            [
-                "Commercial LEO SmallSat (USD 5M sat / USD 15k burn)",
-                "Flagship Earth Observation (USD 300M sat / USD 45k burn)",
-                "High-Value Infrastructure (USD 1B sat / USD 100k burn)",
-            ],
-            index=0,
+    with sim_l:
+        st.markdown("<div style='font-weight:600; font-size:0.9rem; margin-bottom:2px;'>Spacecraft Profile</div>", unsafe_allow_html=True)
+        preset = st.segmented_control(
+            "Spacecraft Profile",
+            options=["SmallSat", "Earth Obs", "Flagship"],
+            default="SmallSat",
+            selection_mode="single",
             label_visibility="collapsed",
+            width="stretch",
+            key="sim_profile",
         )
+        if not preset:
+            preset = "SmallSat"
 
-        if "SmallSat" in preset:
-            default_sat_val, default_burn_val, default_th = 5_000_000, 15_000, 0.030
-        elif "Earth Observation" in preset:
-            default_sat_val, default_burn_val, default_th = 300_000_000, 45_000, 0.020
+        if preset == "SmallSat":
+            default_miss_penalty, default_burn_val, default_th = 250_000, 15_000, 0.020
+            profile_note = "Commercial LEO SmallSat — USD 250k risk-weighted miss penalty / USD 15k burn."
+        elif preset == "Earth Obs":
+            default_miss_penalty, default_burn_val, default_th = 1_000_000, 45_000, 0.015
+            profile_note = "Flagship Earth Observation — USD 1M risk-weighted miss penalty / USD 45k burn."
         else:
-            default_sat_val, default_burn_val, default_th = 1_000_000_000, 100_000, 0.010
+            default_miss_penalty, default_burn_val, default_th = 5_000_000, 100_000, 0.010
+            profile_note = "High-Value Infrastructure — USD 5M risk-weighted miss penalty / USD 100k burn."
 
-        st.markdown("#### 2. Decision Threshold (p*)")
+        st.markdown(f"<div style='font-size:0.78rem; color:#8B98B0; margin-bottom:6px;'>{profile_note}</div>", unsafe_allow_html=True)
+
         sim_th = st.slider(
-            "Probability Threshold",
+            "Maneuver Trigger Threshold (p*)",
             min_value=0.005,
             max_value=0.250,
             value=default_th,
             step=0.005,
             format="%.3f",
+            key=f"sim_th_{preset}",
         )
-        st.caption(f"Encounters with P(collision) ≥ {sim_th:.1%} trigger a maneuver.")
+        st.caption(f"Command an avoidance burn whenever calibrated P(collision) ≥ {sim_th:.1%}.")
 
-        st.markdown("#### 3. Cost Parameters (USD)")
-        cost_collision = st.number_input("Collision Loss Cost (USD)", value=default_sat_val, step=1_000_000)
-        cost_manoeuvre = st.number_input("Avoidance Burn Cost (USD)", value=default_burn_val, step=5_000)
+        cost_collision = st.number_input("Risk-Weighted Miss Penalty (USD)", value=default_miss_penalty, step=50_000, key=f"cc_{preset}")
+        cost_manoeuvre = st.number_input("Avoidance Burn Cost (USD)", value=default_burn_val, step=5_000, key=f"cm_{preset}")
 
         sim_pred_bin = (split_preds["high_risk_prob"] >= sim_th).astype(int)
         y_eval_true = split_preds["actual_high_risk"].values
@@ -1075,25 +1374,55 @@ def render_simulator(split_preds: pd.DataFrame) -> None:
         savings = cost_baseline - cost_model
         savings_pct = (savings / max(1, cost_baseline)) * 100
 
-        savings_color = "#34D399" if savings >= 0 else "#FB7185"
+        sav_col = "#10B981" if savings >= 0 else "#F43F5E"
         st.markdown(
             f"""
-            <div class='info-card' style='margin-top:14px; border-color:{savings_color};'>
-                <div class='kpi-label'>Net Financial Balance vs Baseline A</div>
-                <div class='mono' style='font-size:1.75rem; font-weight:800; color:{savings_color}; margin:4px 0;'>
-                    USD {savings:+,.0f}
-                </div>
-                <div style='font-size:0.82rem; color:#CBD5E1;'>
-                    Relative cost delta: <strong style='color:{savings_color};'>{savings_pct:+.1f}%</strong> vs legacy persistence.
-                </div>
-            </div>
-            """,
+<div style='background:#121722; border:1px solid {sav_col}; border-radius:8px; padding:14px 16px; margin-top:8px;'>
+    <div style='font-size:0.76rem; color:#8B98B0;'>Expected Financial Balance vs Baseline A</div>
+    <div class='mono' style='font-size:1.55rem; font-weight:700; color:{sav_col}; margin:3px 0;'>USD {savings:+,.0f}</div>
+    <div style='font-size:0.8rem; color:#CBD5E1;'>
+        {savings_pct:+.1f}% total expected mission cost change at p* = {sim_th:.3f}.
+    </div>
+</div>
+""",
             unsafe_allow_html=True,
         )
 
-    with sim_c2:
-        st.markdown("#### Operational Risk Frontier (Missed Collisions vs False Alarms)")
+    with sim_r:
+        fn_delta = sim_metrics["fn"] - base_metrics["fn"]
+        fp_saved = base_metrics["fp"] - sim_metrics["fp"]
+        fn_col = "#10B981" if fn_delta <= 0 else "#F59E0B"
+        fp_col = "#10B981" if fp_saved >= 0 else "#F43F5E"
 
+        st.markdown(
+            f"""
+<div class='kpi-strip'>
+    <div class='kpi-tile'>
+        <div class='kpi-tile-lbl'>Recall (Caught)</div>
+        <div class='kpi-tile-val' style='color:#38BDF8;'>{sim_metrics['recall']:.1%}</div>
+        <div class='kpi-tile-sub'>{sim_metrics['tp']} of {sim_metrics['tp']+sim_metrics['fn']} hazards</div>
+    </div>
+    <div class='kpi-tile'>
+        <div class='kpi-tile-lbl'>Missed Hazards (FN)</div>
+        <div class='kpi-tile-val' style='color:{fn_col};'>{sim_metrics['fn']}</div>
+        <div class='kpi-tile-sub'>{fn_delta:+d} vs Baseline ({base_metrics['fn']})</div>
+    </div>
+    <div class='kpi-tile'>
+        <div class='kpi-tile-lbl'>False Alarms (FP)</div>
+        <div class='kpi-tile-val' style='color:{fp_col};'>{sim_metrics['fp']}</div>
+        <div class='kpi-tile-sub'>{fp_saved:+d} saved vs Baseline ({base_metrics['fp']})</div>
+    </div>
+    <div class='kpi-tile'>
+        <div class='kpi-tile-lbl'>F2 Score</div>
+        <div class='kpi-tile-val'>{sim_metrics['f2']:.3f}</div>
+        <div class='kpi-tile-sub'>Baseline F2: {base_metrics['f2']:.3f}</div>
+    </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+        # Trade-off frontier curve
         th_grid = np.linspace(0.005, 0.35, 70)
         sweep_pts = []
         for t in th_grid:
@@ -1108,9 +1437,10 @@ def render_simulator(split_preds: pd.DataFrame) -> None:
                 x=sweep_df["fp"],
                 y=sweep_df["fn"],
                 mode="lines",
-                name="NearMiss Frontier",
-                line=dict(color="#22D3EE", width=3),
-                hovertemplate="False Alarms (FP): %{x}<br>Missed Collisions (FN): %{y}<extra></extra>",
+                name="NearMiss trade-off curve",
+                line=dict(color="#38BDF8", width=2.8),
+                hovertemplate="Threshold: %{customdata:.3f}<br>False alarms (FP): %{x}<br>Missed hazards (FN): %{y}<extra></extra>",
+                customdata=sweep_df["threshold"],
             )
         )
         fig_sim.add_trace(
@@ -1118,9 +1448,9 @@ def render_simulator(split_preds: pd.DataFrame) -> None:
                 x=[sim_metrics["fp"]],
                 y=[sim_metrics["fn"]],
                 mode="markers",
-                name=f"Selected Policy (p*={sim_th:.3f})",
-                marker=dict(size=14, color="#F43F5E", symbol="star", line=dict(width=1, color="#F8FAFC")),
-                hovertemplate=f"Selected Policy (p*={sim_th:.3f})<br>FP: %{{x}}, FN: %{{y}}<extra></extra>",
+                name=f"Active Policy (p*={sim_th:.3f})",
+                marker=dict(size=14, color="#F43F5E", symbol="star", line=dict(width=1.2, color="#F8FAFC")),
+                hovertemplate=f"Active Policy (p*={sim_th:.3f})<br>FP: %{{x}}, FN: %{{y}}<extra></extra>",
             )
         )
         fig_sim.add_trace(
@@ -1129,300 +1459,410 @@ def render_simulator(split_preds: pd.DataFrame) -> None:
                 y=[base_metrics["fn"]],
                 mode="markers",
                 name="Baseline A (Persistence)",
-                marker=dict(size=12, color="#FBBF24", symbol="square", line=dict(width=1, color="#060913")),
+                marker=dict(size=11, color="#F59E0B", symbol="square", line=dict(width=1, color="#0B0E14")),
                 hovertemplate="Baseline A<br>FP: %{x}, FN: %{y}<extra></extra>",
             )
         )
-
         fig_sim.update_layout(
-            xaxis=dict(title="Unnecessary Maneuvers (False Positives)", gridcolor="#1E293B", color="#CBD5E1"),
-            yaxis=dict(title="Missed Collisions (False Negatives)", gridcolor="#1E293B", color="#CBD5E1"),
-            paper_bgcolor="#0F172A",
-            plot_bgcolor="#090E1C",
-            legend=dict(
-                orientation="h",
-                yanchor="top",
-                y=-0.22,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=11, color="#CBD5E1"),
-            ),
-            height=350,
-            margin=dict(l=68, r=24, t=20, b=82),
+            xaxis=dict(title="Unnecessary maneuvers (FP)", gridcolor="rgba(255,255,255,0.06)", color="#94A3B8", title_font=dict(size=11)),
+            yaxis=dict(title="Missed collisions (FN)", gridcolor="rgba(255,255,255,0.06)", color="#94A3B8", title_font=dict(size=11)),
+            paper_bgcolor="#121722",
+            plot_bgcolor="#0D1119",
+            font=dict(family="IBM Plex Sans", color="#CBD5E1"),
+            legend=dict(orientation="h", yanchor="top", y=-0.30, xanchor="center", x=0.5, font=dict(size=10.5)),
+            height=262,
+            margin=dict(l=54, r=16, t=12, b=72),
         )
-        st.plotly_chart(fig_sim, use_container_width=True)
+        st.plotly_chart(fig_sim, width="stretch", config={"displayModeBar": False})
 
-        mat_c1, mat_c2 = st.columns(2)
-        with mat_c1:
+        cm1, cm2 = st.columns(2, gap="small")
+        with cm1:
             st.markdown(
                 f"""
-                <div class='info-card'>
-                    <div style='font-size:0.76rem; font-weight:800; color:#22D3EE; text-transform:uppercase; margin-bottom:8px;'>
-                        NearMiss Matrix (p* = {sim_th:.3f})
-                    </div>
-                    <table style='width:100%; border-collapse:separate; border-spacing:4px; font-family:"JetBrains Mono",monospace; font-size:0.84rem;'>
-                        <tr><th></th><th style='color:#94A3B8;'>Pred Safe</th><th style='color:#94A3B8;'>Pred Burn</th></tr>
-                        <tr>
-                            <th style='color:#94A3B8;'>Safe</th>
-                            <td style='background:#16223B; padding:8px; border-radius:4px;'>{sim_metrics['tn']:,} (TN)</td>
-                            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF; padding:8px; border-radius:4px;'>{sim_metrics['fp']:,} (FP)</td>
-                        </tr>
-                        <tr>
-                            <th style='color:#94A3B8;'>Danger</th>
-                            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF; padding:8px; border-radius:4px;'>{sim_metrics['fn']:,} (FN)</td>
-                            <td style='background:rgba(52,211,153,0.16); color:#6EE7B7; padding:8px; border-radius:4px;'>{sim_metrics['tp']:,} (TP)</td>
-                        </tr>
-                    </table>
-                </div>
-                """,
+<div class='cm-card'>
+    <div class='cm-title' style='color:#38BDF8;'>NearMiss Matrix (p* = {sim_th:.3f})</div>
+    <table class='cm-table'>
+        <tr><th></th><th>Pred Safe</th><th>Pred Burn</th></tr>
+        <tr>
+            <th>Actual Safe</th>
+            <td style='background:#192131; color:#CBD5E1;'>{sim_metrics['tn']:,} (TN)</td>
+            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF;'>{sim_metrics['fp']:,} (FP)</td>
+        </tr>
+        <tr>
+            <th>Actual Danger</th>
+            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF;'>{sim_metrics['fn']:,} (FN)</td>
+            <td style='background:rgba(16,185,129,0.16); color:#6EE7B7;'>{sim_metrics['tp']:,} (TP)</td>
+        </tr>
+    </table>
+</div>
+""",
                 unsafe_allow_html=True,
             )
-        with mat_c2:
+        with cm2:
             st.markdown(
                 f"""
-                <div class='info-card'>
-                    <div style='font-size:0.76rem; font-weight:800; color:#FBBF24; text-transform:uppercase; margin-bottom:8px;'>
-                        Baseline A Matrix (Persistence)
-                    </div>
-                    <table style='width:100%; border-collapse:separate; border-spacing:4px; font-family:"JetBrains Mono",monospace; font-size:0.84rem;'>
-                        <tr><th></th><th style='color:#94A3B8;'>Pred Safe</th><th style='color:#94A3B8;'>Pred Burn</th></tr>
-                        <tr>
-                            <th style='color:#94A3B8;'>Safe</th>
-                            <td style='background:#16223B; padding:8px; border-radius:4px;'>{base_metrics['tn']:,} (TN)</td>
-                            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF; padding:8px; border-radius:4px;'>{base_metrics['fp']:,} (FP)</td>
-                        </tr>
-                        <tr>
-                            <th style='color:#94A3B8;'>Danger</th>
-                            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF; padding:8px; border-radius:4px;'>{base_metrics['fn']:,} (FN)</td>
-                            <td style='background:rgba(52,211,153,0.16); color:#6EE7B7; padding:8px; border-radius:4px;'>{base_metrics['tp']:,} (TP)</td>
-                        </tr>
-                    </table>
-                </div>
-                """,
+<div class='cm-card'>
+    <div class='cm-title' style='color:#F59E0B;'>Baseline A Matrix (Persistence)</div>
+    <table class='cm-table'>
+        <tr><th></th><th>Pred Safe</th><th>Pred Burn</th></tr>
+        <tr>
+            <th>Actual Safe</th>
+            <td style='background:#192131; color:#CBD5E1;'>{base_metrics['tn']:,} (TN)</td>
+            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF;'>{base_metrics['fp']:,} (FP)</td>
+        </tr>
+        <tr>
+            <th>Actual Danger</th>
+            <td style='background:rgba(244,63,94,0.16); color:#FDA4AF;'>{base_metrics['fn']:,} (FN)</td>
+            <td style='background:rgba(16,185,129,0.16); color:#6EE7B7;'>{base_metrics['tp']:,} (TP)</td>
+        </tr>
+    </table>
+</div>
+""",
                 unsafe_allow_html=True,
             )
-
-
-def render_benchmarks() -> None:
-    """Render Model Benchmarks, Calibration, and Orbital Physics."""
-    st.markdown("<div class='section-head'>ESA Benchmark Suite & Orbital Physics</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='section-sub'>Out-of-fold 5-fold cross-validation (8,293 filtered events) and locked competition test set (2,167 events).</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Full-width benchmark tables so zero columns are clipped
-    st.markdown("#### 5-Fold Cross-Validation Performance (8,293 Filtered Events)")
-    cv_df = pd.DataFrame(
-        [
-            ["Baseline A (Persistence)", "Reference Baseline", "71.21%", "15.26%", 0.4108, 0.1803, 19, 261],
-            ["Logistic Regression", "Unweighted", "28.79%", "25.00%", 0.2794, 0.1711, 47, 57],
-            ["Logistic Regression", "Balanced Weights", "87.88%", "6.58%", 0.2531, 0.1484, 8, 824],
-            ["Random Forest", "Unweighted", "45.45%", "24.59%", 0.3886, 0.1759, 36, 92],
-            ["Random Forest (Champion)", "Balanced Subsample", "71.21%", "16.85%", 0.4328, 0.1926, 19, 232],
-            ["LightGBM Classifier", "Scale-Pos-Weight", "65.15%", "19.11%", 0.4397, 0.1504, 23, 182],
-        ],
-        columns=["Model Architecture", "Balancing Strategy", "Recall", "Precision", "F2 Score", "PR-AUC", "Missed (FN)", "False Alarms (FP)"],
-    )
-    st.dataframe(cv_df, use_container_width=True, hide_index=True)
-
-    st.markdown("#### Locked Competition Test Benchmark (2,167 Events · 150 High-Risk)")
-    test_df = pd.DataFrame(
-        [
-            ["Baseline A (Persistence)", "Reference (0)", "Reference (0)", "64.61%", 0.7391, 26.64],
-            ["NearMiss Production (RF + Platt)", "+12 Avoided Burns", "+3 Rescued Events", "66.46%", 0.7030, 133.79],
-        ],
-        columns=["Pipeline Variant", "Avoided Burns", "Rescued Collisions", "Precision", "F2 Score", "High-Risk MSE"],
-    )
-    st.dataframe(test_df, use_container_width=True, hide_index=True)
-
-    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-    fig_c1, fig_c2 = st.columns(2)
-    with fig_c1:
-        st.markdown("#### Platt Calibration Reliability (-59.5% Brier Error)")
-        cal_img = Path("reports/figures/calibration_curve.png")
-        if cal_img.exists():
-            st.image(str(cal_img), use_container_width=True)
-    with fig_c2:
-        st.markdown("#### Global Tree SHAP Feature Attribution")
-        shap_img = Path("reports/figures/shap_importance.png")
-        if shap_img.exists():
-            st.image(str(shap_img), use_container_width=True)
-
-    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-    st.markdown("#### Orbital Covariance Physics Features (73 Dimensions)")
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        st.markdown(
-            """
-            <div class='kpi-card'>
-                <div style='color:#22D3EE; font-weight:800; font-size:0.98rem; margin-bottom:6px;'>Combined Positional Sigmas</div>
-                <div style='font-size:0.84rem; color:#CBD5E1; line-height:1.5;'>
-                    Root-sum-square positional dispersion combining target and chaser RTN covariance tensors.
-                    <br><br><code class='mono' style='color:#F8FAFC;'>σ_pos = √(σ_t² + σ_c²)</code>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with f2:
-        st.markdown(
-            """
-            <div class='kpi-card'>
-                <div style='color:#818CF8; font-weight:800; font-size:0.98rem; margin-bottom:6px;'>Covariance Ellipsoid Volume</div>
-                <div style='font-size:0.84rem; color:#CBD5E1; line-height:1.5;'>
-                    True 3D positional uncertainty volume computed from full 3×3 covariance determinants.
-                    <br><br><code class='mono' style='color:#F8FAFC;'>Vol = √det(C_pos)</code>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with f3:
-        st.markdown(
-            """
-            <div class='kpi-card'>
-                <div style='color:#34D399; font-weight:800; font-size:0.98rem; margin-bottom:6px;'>Volume Contraction Ratio</div>
-                <div style='font-size:0.84rem; color:#CBD5E1; line-height:1.5;'>
-                    Rate of uncertainty collapse across successive radar tracking passes prior to T-48h.
-                    <br><br><code class='mono' style='color:#F8FAFC;'>Ratio = Vol_latest / Vol_earliest</code>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
 
 # -----------------------------------------------------------------------------
-# MAIN APP
+# PAGE 4: BENCHMARKS & ORBITAL PHYSICS
+# -----------------------------------------------------------------------------
+def render_benchmarks() -> None:
+    """Render full-width benchmark tables and live interactive Plotly diagnostics."""
+    st.markdown(
+        """
+<div class='section-title'>ESA Kelvins Benchmark & Model Calibration</div>
+<div class='section-desc'>Evaluated under strict event-grouped cross-validation (8,293 filtered events) and on the locked competition test set (2,167 events).</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # Full-width benchmark tables so every column is visible with zero clipping
+    st.markdown("<div style='font-weight:600; font-size:0.94rem; margin-bottom:2px;'>Locked ESA Blind Test Set (2,167 Events, 150 High-Risk)</div>", unsafe_allow_html=True)
+    test_df = pd.DataFrame(
+        [
+            ["Baseline A (Persistence)", 76.67, 64.61, 0.7391, 0.6651, 35, 63, 26.64, "Reference"],
+            ["NearMiss Champion (RF + Platt)", 71.33, 66.46, 0.7030, 0.6270, 43, 54, 133.79, "12 burns saved, 3 collisions rescued"],
+        ],
+        columns=["Pipeline", "Recall", "Precision", "F2 Score", "PR-AUC", "Missed (FN)", "False Alarms (FP)", "High-Risk MSE", "Operational Impact"],
+    )
+    st.dataframe(
+        test_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Recall": st.column_config.NumberColumn(format="%.2f%%"),
+            "Precision": st.column_config.NumberColumn(format="%.2f%%"),
+            "F2 Score": st.column_config.NumberColumn(format="%.4f"),
+            "PR-AUC": st.column_config.NumberColumn(format="%.4f"),
+            "High-Risk MSE": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+    st.markdown("<div style='font-weight:600; font-size:0.94rem; margin-top:4px; margin-bottom:2px;'>5-Fold Out-of-Fold Cross-Validation (8,293 Filtered Events, 66 High-Risk)</div>", unsafe_allow_html=True)
+    cv_df = pd.DataFrame(
+        [
+            ["Baseline A (Persistence)", "Reference", 71.21, 15.26, 0.4108, 0.1803, 19, 261],
+            ["Logistic Regression", "Unweighted", 28.79, 25.00, 0.2794, 0.1711, 47, 57],
+            ["Logistic Regression", "Balanced Weights", 87.88, 6.58, 0.2531, 0.1484, 8, 824],
+            ["Random Forest", "Unweighted", 45.45, 24.59, 0.3886, 0.1759, 36, 92],
+            ["Random Forest (Champion)", "Balanced Subsample", 71.21, 16.85, 0.4328, 0.1926, 19, 232],
+            ["LightGBM Classifier", "Scale-Pos-Weight", 65.15, 19.11, 0.4397, 0.1504, 23, 182],
+        ],
+        columns=["Model Architecture", "Imbalance Strategy", "Recall", "Precision", "F2 Score", "PR-AUC", "Missed (FN)", "False Alarms (FP)"],
+    )
+    st.dataframe(
+        cv_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Recall": st.column_config.NumberColumn(format="%.2f%%"),
+            "Precision": st.column_config.NumberColumn(format="%.2f%%"),
+            "F2 Score": st.column_config.NumberColumn(format="%.4f"),
+            "PR-AUC": st.column_config.NumberColumn(format="%.4f"),
+        },
+    )
+
+    # Matching Interactive Plotly Diagnostics (replaces clashing white/black PNGs!)
+    diag_l, diag_r = st.columns(2, gap="medium")
+
+    with diag_l:
+        st.markdown("<div style='font-weight:600; font-size:0.92rem; margin-bottom:2px;'>Platt Probability Calibration Reliability (-59.5% Brier Error)</div>", unsafe_allow_html=True)
+        cal_df = load_calibration_oof()
+        fig_cal = go.Figure()
+
+        fig_cal.add_trace(
+            go.Scatter(
+                x=[0, 1],
+                y=[0, 1],
+                mode="lines",
+                name="Perfect calibration",
+                line=dict(color="rgba(148, 163, 184, 0.45)", width=1.5, dash="dash"),
+                hoverinfo="skip",
+            )
+        )
+
+        if cal_df is not None and len(cal_df) > 0:
+            sub_cal = cal_df[cal_df["is_eval_filtered"]] if "is_eval_filtered" in cal_df.columns else cal_df
+            y_true = sub_cal["y_high_risk"].values
+            raw_p = sub_cal["raw_prob"].values
+            cal_p = sub_cal["calibrated_prob"].values
+            brier_raw = brier_score_loss(y_true, raw_p)
+            brier_cal = brier_score_loss(y_true, cal_p)
+
+            raw_true, raw_pred = calibration_curve(y_true, raw_p, n_bins=8, strategy="uniform")
+            cal_true, cal_pred = calibration_curve(y_true, cal_p, n_bins=8, strategy="uniform")
+
+            fig_cal.add_trace(
+                go.Scatter(
+                    x=raw_pred,
+                    y=raw_true,
+                    mode="lines+markers",
+                    name=f"Uncalibrated RF (Brier {brier_raw:.4f})",
+                    line=dict(color="#F43F5E", width=2.4),
+                    marker=dict(size=7, color="#F43F5E"),
+                    hovertemplate="Predicted: %{x:.1%}<br>Observed rate: %{y:.1%}<extra></extra>",
+                )
+            )
+            fig_cal.add_trace(
+                go.Scatter(
+                    x=cal_pred,
+                    y=cal_true,
+                    mode="lines+markers",
+                    name=f"Platt Calibrated RF (Brier {brier_cal:.4f})",
+                    line=dict(color="#38BDF8", width=2.8),
+                    marker=dict(size=8, color="#38BDF8", line=dict(width=1, color="#F8FAFC")),
+                    hovertemplate="Calibrated: %{x:.1%}<br>Observed rate: %{y:.1%}<extra></extra>",
+                )
+            )
+
+        fig_cal.update_layout(
+            xaxis=dict(title="Mean predicted probability", range=[-0.02, 1.0], tickformat=".0%", gridcolor="rgba(255,255,255,0.06)", color="#94A3B8"),
+            yaxis=dict(title="Observed high-risk fraction", range=[-0.02, 0.52], tickformat=".0%", gridcolor="rgba(255,255,255,0.06)", color="#94A3B8"),
+            paper_bgcolor="#121722",
+            plot_bgcolor="#0D1119",
+            font=dict(family="IBM Plex Sans", color="#CBD5E1"),
+            legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5, font=dict(size=10.5)),
+            height=355,
+            margin=dict(l=58, r=18, t=12, b=72),
+        )
+        st.plotly_chart(fig_cal, width="stretch", config={"displayModeBar": False})
+
+    with diag_r:
+        st.markdown("<div style='font-weight:600; font-size:0.92rem; margin-bottom:2px;'>Global Feature Drivers (Tree SHAP Mean |SHAP|)</div>", unsafe_allow_html=True)
+        shap_df = pd.DataFrame(TOP_SHAP_FEATURES, columns=["raw", "label", "val", "group"]).iloc[::-1]
+        color_map = {"Trajectory": "#38BDF8", "Covariance": "#F59E0B", "Dynamics": "#10B981", "Timing": "#A78BFA"}
+
+        fig_shap = go.Figure()
+        for grp in ["Trajectory", "Covariance", "Dynamics", "Timing"]:
+            part = shap_df[shap_df["group"] == grp]
+            if len(part) == 0:
+                continue
+            fig_shap.add_trace(
+                go.Bar(
+                    x=part["val"],
+                    y=part["label"],
+                    orientation="h",
+                    name=grp,
+                    marker=dict(color=color_map[grp], line=dict(width=0)),
+                    customdata=part["raw"],
+                    hovertemplate="%{y}<br>Feature: %{customdata}<br>Mean |SHAP|: %{x:.4f}<extra></extra>",
+                )
+            )
+        fig_shap.update_layout(
+            barmode="stack",
+            xaxis=dict(title="Mean |SHAP| impact on collision risk", gridcolor="rgba(255,255,255,0.06)", color="#94A3B8"),
+            yaxis=dict(categoryorder="array", categoryarray=shap_df["label"].tolist(), color="#CBD5E1", tickfont=dict(size=10.5)),
+            paper_bgcolor="#121722",
+            plot_bgcolor="#0D1119",
+            font=dict(family="IBM Plex Sans", color="#CBD5E1"),
+            legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5, font=dict(size=10.5)),
+            height=355,
+            margin=dict(l=175, r=18, t=12, b=72),
+        )
+        st.plotly_chart(fig_shap, width="stretch", config={"displayModeBar": False})
+
+    # Orbital Physics Summary Strip
+    st.markdown(
+        """
+<div class='flow-grid'>
+    <div class='flow-step'>
+        <div class='flow-step-title'>Combined Positional Sigmas</div>
+        <div class='flow-step-body'>
+            Root-sum-square radial, along-track, and cross-track uncertainty fusing both target and chaser covariance tensors:
+            <span class='mono' style='color:#38BDF8;'>σ_pos = √(σ_t² + σ_c²)</span>.
+        </div>
+    </div>
+    <div class='flow-step gold'>
+        <div class='flow-step-title'>3D Ellipsoid Volume</div>
+        <div class='flow-step-body'>
+            Determinant-based orbital uncertainty volume measuring how tightly ground radar constrains the flyby corridor:
+            <span class='mono' style='color:#FCD34D;'>Vol = √det(C_pos)</span>.
+        </div>
+    </div>
+    <div class='flow-step green'>
+        <div class='flow-step-title'>Volume Contraction Ratio</div>
+        <div class='flow-step-body'>
+            Ratio of latest to earliest covariance volume across passes—separating true tightening threats from transient noise:
+            <span class='mono' style='color:#6EE7B7;'>Vol_cutoff / Vol_initial</span>.
+        </div>
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+# -----------------------------------------------------------------------------
+# MAIN APPLICATION SHELL (SIDEBAR + SINGLE-ROW TOP NAVBAR)
 # -----------------------------------------------------------------------------
 def main() -> None:
     cfg, all_preds, all_hist = load_app_data()
 
-    if "active_page" not in st.session_state:
+    if "active_page" not in st.session_state or st.session_state["active_page"] not in NAV_PAGES:
         st.session_state["active_page"] = "Overview"
 
     high_risk_thresh = float(cfg.get("thresholds", {}).get("high_risk_log10", -6.0))
     operational_thresh = float(cfg.get("thresholds", {}).get("operational_risk_log10", -4.0))
     cutoff_days = float(cfg["data"]["cutoff_days"])
 
-    # --- SIDEBAR: COHORT, QUICK-JUMPS & OPERATOR GUIDE ---
+    # --- PURPOSEFUL, PLAIN-ENGLISH SIDEBAR ---
     with st.sidebar:
+        st.markdown("<div class='sb-section-title'>Active Dataset</div>", unsafe_allow_html=True)
         st.markdown(
-            """
-            <div class='sb-brand'>
-                <div class='sb-badge'>SW-5</div>
-                <div>
-                    <div style='font-weight:800; font-size:1.1rem; color:#F8FAFC;'>NearMiss Console</div>
-                    <div style='font-size:0.76rem; color:#94A3B8;'>Orbital Risk Decision Support</div>
-                </div>
-            </div>
-            """,
+            "<div class='sb-help'>Choose which unseen set of ESA satellite encounters to inspect across all views.</div>",
             unsafe_allow_html=True,
         )
-
-        st.markdown("<div class='sb-label'>Evaluation Cohort</div>", unsafe_allow_html=True)
         split_choice = st.radio(
             "Dataset Cohort",
-            options=["Validation Cohort (Fold 0 OOF)", "Locked Test Set (ESA Blind)"],
+            options=["Validation Set (2,389)", "ESA Blind Test (2,167)"],
             index=0,
             label_visibility="collapsed",
         )
-        split_key = "val" if "Validation" in split_choice else "test"
-        split_label = "Validation OOF" if split_key == "val" else "Locked ESA Test"
+        split_key = "val" if split_choice.startswith("Validation") else "test"
+        split_label = "Validation" if split_key == "val" else "Blind Test"
+        split_full_label = "Validation Set" if split_key == "val" else "ESA Blind Test Set"
         split_preds = all_preds[all_preds["split"] == split_key].copy()
+        split_hist = _slice_history_for_split(all_hist, split_key)
 
-        cohort_desc = (
-            "Out-of-fold validation encounters used to calibrate probabilities without leakage."
-            if split_key == "val"
-            else "Official blind competition encounters held out from all training and tuning."
-        )
+        n_man = int((split_preds["recommendation"] == "MANOEUVRE").sum())
+        n_haz = int(split_preds["actual_high_risk"].sum())
         st.markdown(
-            f"<div class='sb-card'>{cohort_desc}<br><strong>{len(split_preds):,}</strong> events · <strong>{int(split_preds['actual_high_risk'].sum())}</strong> high-risk</div>",
+            f"""
+<div class='sb-stat-strip'>
+    <div>
+        <div class='sb-stat-num' style='color:#FDA4AF;'>{n_man:,}</div>
+        <div class='sb-stat-lbl'>Burns recommended</div>
+    </div>
+    <div>
+        <div class='sb-stat-num' style='color:#FCD34D;'>{n_haz:,}</div>
+        <div class='sb-stat-lbl'>Actual hazards</div>
+    </div>
+</div>
+<hr class='sb-hr'>
+""",
             unsafe_allow_html=True,
         )
 
         notable = _notable_events(split_preds)
-        st.markdown("<div class='sb-label'>Quick-Jump Encounters</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sb-section-title'>Guided Demo Jumps</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='sb-help'>Jump straight into a notable encounter:</div>",
+            unsafe_allow_html=True,
+        )
         if notable["rescued"] is not None:
-            if st.button(f"Rescued Collision #{notable['rescued']}", use_container_width=True, key="sb_rescued"):
+            if st.button(f"Caught Collision  #{notable['rescued']}", width="stretch", key="sb_jump_rescued"):
                 _navigate_to("Event Inspector", notable["rescued"])
                 st.rerun()
         if notable["avoided"] is not None:
-            if st.button(f"Avoided False Alarm #{notable['avoided']}", use_container_width=True, key="sb_avoided"):
+            if st.button(f"Saved Fuel Burn  #{notable['avoided']}", width="stretch", key="sb_jump_avoided"):
                 _navigate_to("Event Inspector", notable["avoided"])
                 st.rerun()
         if notable["top_risk"] is not None:
-            if st.button(f"Highest Risk Event #{notable['top_risk']}", use_container_width=True, key="sb_top"):
+            if st.button(f"Highest Risk Case  #{notable['top_risk']}", width="stretch", key="sb_jump_top"):
                 _navigate_to("Event Inspector", notable["top_risk"])
                 st.rerun()
 
-        st.markdown("<div class='sb-label'>Operator Threshold Guide</div>", unsafe_allow_html=True)
         st.markdown(
             f"""
-            <div class='sb-card'>
-                <div class='sb-rule-row'>
-                    <span style='color:#94A3B8;'>Planning Cutoff</span>
-                    <span class='mono' style='color:#22D3EE; font-weight:700;'>T-{cutoff_days*24:.0f}h ({cutoff_days:.1f}d)</span>
-                </div>
-                <div class='sb-rule-row'>
-                    <span style='color:#94A3B8;'>Warning Level</span>
-                    <span class='mono' style='color:#FBBF24; font-weight:700;'>10⁻⁶ ({high_risk_thresh:.1f})</span>
-                </div>
-                <div class='sb-rule-row'>
-                    <span style='color:#94A3B8;'>Maneuver Level</span>
-                    <span class='mono' style='color:#FB7185; font-weight:700;'>10⁻⁴ ({operational_thresh:.1f})</span>
-                </div>
-            </div>
-            <div style='font-size:0.76rem; color:#94A3B8; line-height:1.45;'>
-                <strong>Confidence Tiers:</strong> HIGH means clear burn/stand-down margin; LOW flags borderline geometry for radar re-tasking.
-            </div>
-            """,
+<hr class='sb-hr'>
+<div class='sb-section-title'>Reading the Numbers</div>
+<div class='sb-guide-item'>
+    <div class='sb-guide-head'><span>Decision Horizon</span><span class='mono' style='color:#38BDF8;'>T-{cutoff_days*24:.0f}h</span></div>
+    <div class='sb-guide-desc'>All radar passes inside {cutoff_days:.0f} days to closest approach are hidden during prediction.</div>
+</div>
+<div class='sb-guide-item'>
+    <div class='sb-guide-head'><span>Alert Risk Level</span><span class='mono' style='color:#FCD34D;'>1 in 1M ({high_risk_thresh:.1f})</span></div>
+    <div class='sb-guide-desc'>ESA Kelvins high-risk threshold where an encounter becomes dangerous.</div>
+</div>
+<div class='sb-guide-item'>
+    <div class='sb-guide-head'><span>Burn Risk Level</span><span class='mono' style='color:#FDA4AF;'>1 in 10k ({operational_thresh:.1f})</span></div>
+    <div class='sb-guide-desc'>Operational emergency threshold triggering mandatory collision review.</div>
+</div>
+<div class='sb-guide-item'>
+    <div class='sb-guide-head'><span>Confidence Tiers</span><span class='mono' style='color:#CBD5E1;'>High / Med / Low</span></div>
+    <div class='sb-guide-desc'>Distance from decision cutoff; Low flags borderline cases for extra radar tasking.</div>
+</div>
+""",
             unsafe_allow_html=True,
         )
 
-    # --- TOP COMMAND HEADER ---
-    st.markdown(
-        f"""
-        <div class='cmd-header'>
-            <div class='cmd-brand'>
-                <div class='cmd-logo'>NEARMISS</div>
-                <div>
-                    <div class='cmd-title'>Orbital Conjunction Assessment Console</div>
-                    <div class='cmd-sub'>Autonomous Collision Risk Predictor · StarForge Challenge SW-5</div>
-                </div>
-            </div>
-            <div class='cmd-pills'>
-                <span class='pill-cohort'>COHORT: {split_label.upper()} ({len(split_preds):,})</span>
-                <span class='pill-cutoff'><span class='pulse-dot'></span>T-{cutoff_days*24:.0f}H CUTOFF ACTIVE</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # --- SINGLE-ROW TOP NAVIGATION BAR ---
+    nav_brand, nav_b1, nav_b2, nav_b3, nav_b4, nav_stat = st.columns(
+        [1.65, 0.8, 1.15, 1.15, 0.9, 1.75],
+        gap="small",
+        vertical_alignment="center",
     )
 
-    # --- PRIMARY NAVIGATION BAR ---
-    nav_cols = st.columns(len(NAV_PAGES))
-    for idx, page_name in enumerate(NAV_PAGES):
-        with nav_cols[idx]:
+    with nav_brand:
+        st.markdown(
+            """
+<div class='nav-brand'>
+    <div class='nav-mark'>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" stroke-width="2.2">
+            <circle cx="12" cy="12" r="9" stroke-opacity="0.45"/>
+            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-32 12 12)" stroke="#F59E0B"/>
+            <circle cx="12" cy="12" r="2.6" fill="#38BDF8" stroke="none"/>
+        </svg>
+    </div>
+    <div>
+        <div class='nav-name'>NearMiss</div>
+        <div class='nav-sub'>SW-5 Orbital Conjunction Console</div>
+    </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    nav_slots = [nav_b1, nav_b2, nav_b3, nav_b4]
+    for slot, page_name in zip(nav_slots, NAV_PAGES):
+        with slot:
             is_active = st.session_state["active_page"] == page_name
             if st.button(
                 page_name,
                 type="primary" if is_active else "secondary",
-                use_container_width=True,
-                key=f"nav_{page_name}",
+                width="stretch",
+                key=f"topbar_{page_name}",
             ):
                 _navigate_to(page_name)
                 st.rerun()
 
-    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+    with nav_stat:
+        st.markdown(
+            f"""
+<div class='nav-status'>
+    <span class='status-chip'><span class='status-dot'></span>T-{cutoff_days*24:.0f}h · {split_label}</span>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<hr class='nav-divider'>", unsafe_allow_html=True)
 
     # --- ROUTE TO ACTIVE VIEW ---
     active_page = st.session_state["active_page"]
     if active_page == "Overview":
-        render_overview(split_preds, split_label, cutoff_days)
+        render_overview(split_preds, split_hist, split_full_label, high_risk_thresh, cutoff_days)
     elif active_page == "Event Inspector":
-        render_inspector(split_preds, all_hist, high_risk_thresh, cutoff_days)
+        render_inspector(split_preds, split_hist, high_risk_thresh, cutoff_days)
     elif active_page == "Policy Simulator":
         render_simulator(split_preds)
     else:

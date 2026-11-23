@@ -276,8 +276,10 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 ### 3. Bugs Fixed
 - **Column naming alignment between mock schema and real export:** The app unit tests initially checked for temporary mock names (`predicted_final_risk`, `baseline_a_recommendation`, `risk`, `is_visible`), whereas production export used the exact Section 6 specification (`pred_final_log_risk`, `baseline_recommendation`, `log_risk`, `visible`). Standardized `tests/test_app.py` to match the exact Section 6 schema.
 - **Streamlit ScriptRunContext warnings during test collection:** Fixed test runner imports to cleanly test backend data caching and dataframe loaders without spawning headless browser servers.
-- **Layout squishing and blank spaces:** Fixed excessive padding and empty spaces by constraining container width (`max-width: 1420px`), pairing Risk and Miss Distance charts side-by-side, and rendering benchmark tables full-width.
-- **LaTeX formatting errors in Streamlit components:** Replaced raw LaTeX math formatting (`$10^{-6}$`) with clean Unicode representations (`10⁻⁶`, `10⁻⁴`) to prevent raw unparsed markup.
+- **Layout squishing and blank spaces:** Fixed Streamlit 1.65 container padding (`[data-testid="stMainBlockContainer"]` and `[data-testid="stSidebarUserContent"]`), unified the top navbar into a single crisp row with zero overlap, paired Risk and Miss Distance charts above the fold, and stacked full-width benchmark tables with zero clipped columns.
+- **405-event `event_id` collision in CDM history charts:** Isolated `val` vs `test` CDM history slices via `_slice_history_for_split()` so colliding event IDs (e.g. `#1101`) no longer merge into jagged multi-event sawtooth trajectories.
+- **Clashing static PNG plots & broken confidence badge:** Replaced clashing black/white Matplotlib PNGs on Benchmarks with unified interactive Plotly Platt Calibration Reliability and Top-12 Tree SHAP charts, fixed the truncated `.conf-high` CSS class mapping, fixed chart annotation overlaps, and replaced deprecated `use_container_width` calls with native `width="stretch"`.
+- **LaTeX formatting errors in Streamlit components:** Replaced raw LaTeX math formatting with clean Unicode and plain-English operator guidance in the sidebar.
 
 ### 4. What More Can Be Done for This Phase
 - Integrate CesiumJS or 3D WebGL satellite orbit visualization to view 3D close-approach encounter geometry alongside the 2D time series.

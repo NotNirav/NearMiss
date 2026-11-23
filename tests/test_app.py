@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from app.streamlit_app import load_app_data
+from app.streamlit_app import _slice_history_for_split, load_app_data
 from src.load import load_config, load_parquet
 
 
@@ -56,3 +56,27 @@ def test_app_split_filtering():
     sample_val_event = val_preds["event_id"].iloc[0]
     val_hist = hist_df[hist_df["event_id"] == sample_val_event]
     assert len(val_hist) > 0, f"History should exist for event {sample_val_event}"
+
+
+def test_history_split_isolation():
+    """Verify val and test CDM histories do not merge on colliding event_ids."""
+    _, preds_df, hist_df = load_app_data()
+
+    val_preds = preds_df[preds_df["split"] == "val"]
+    test_preds = preds_df[preds_df["split"] == "test"]
+    shared_ids = set(val_preds["event_id"]).intersection(set(test_preds["event_id"]))
+    if not shared_ids:
+        return
+
+    eid = sorted(shared_ids)[0]
+    val_hist = _slice_history_for_split(hist_df, "val")
+    test_hist = _slice_history_for_split(hist_df, "test")
+
+    expected_val_vis = int(val_preds[val_preds["event_id"] == eid]["cdm_count_pre_cutoff"].iloc[0])
+    expected_test_vis = int(test_preds[test_preds["event_id"] == eid]["cdm_count_pre_cutoff"].iloc[0])
+
+    actual_val_vis = int(val_hist[(val_hist["event_id"] == eid) & (val_hist["visible"])].shape[0])
+    actual_test_vis = int(test_hist[(test_hist["event_id"] == eid) & (test_hist["visible"])].shape[0])
+
+    assert actual_val_vis == expected_val_vis
+    assert actual_test_vis == expected_test_vis
