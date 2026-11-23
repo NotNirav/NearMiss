@@ -254,7 +254,7 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 
 ### 1. Summary of What Was Done
 - Implemented full interactive Streamlit dashboard (`app/streamlit_app.py`) fulfilling all requirements from Master Build Plan Section 9:
-  - **Operational Dark Theme**: Implemented dark theme in `.streamlit/config.toml` and inline styling (`#060913` canvas, `#0F172A` surface, `#16223B` elevated cards, `#22D3EE` primary cyan, `#F43F5E` red alert badges, `#34D399` safe badges).
+  - **Optical Aerospace Light Theme**: Replaced dark-neon styling with a restrained high-clarity Swiss flight-manual palette in `.streamlit/config.toml` (`#F5F7FA` canvas, `#FFFFFF` instrument surfaces, `#111827` charcoal ink, `#1B4DFF` Aerospace Cobalt primary accent, and strictly semantic `#D92D20` crimson / `#067647` emerald operational statuses) paired with `DM Sans` and `IBM Plex Mono`.
   - **Top Bar & Navigation**: Fixed cluttered header by creating a unified command header and top navigation bar with 4 views (`Overview`, `Event Inspector`, `Policy Simulator`, `Benchmarks & Physics`).
   - **Overview (Mission Briefing Landing Page)**: Added high-impact executive landing page with problem overview (T-48h blind zone), interactive CTA quick-links, live monitored encounter KPIs, 4-step pipeline cards, verified outcomes, and one-click quick-jumps to featured case studies (Rescued Event #873, Avoided False Alarm #409).
   - **Event Inspector**: Re-architected layout to eliminate blank voids:
