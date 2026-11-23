@@ -169,8 +169,23 @@ section[data-testid="stSidebar"],
     background-color: var(--surface) !important;
     border: 1px solid var(--line) !important;
     border-radius: 14px !important;
-    padding: 0.55rem 1.1rem !important;
+    padding: 0.6rem 1.15rem !important;
     box-shadow: var(--shadow-sm) !important;
+}
+/* Cancel Streamlit's -1rem bottom margin on stMarkdownContainer so brand aligns dead-center */
+[class*="st-key-navbar_shell"] [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+[class*="st-key-navbar_shell"] [data-testid="stColumn"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+[class*="st-key-navbar_shell"] button[data-testid="stBaseButton-primary"],
+[class*="st-key-navbar_shell"] button[data-testid="stBaseButton-tertiary"] {
+    min-height: 36px !important;
+    height: 36px !important;
+    padding: 0 0.85rem !important;
 }
 
 /* Top Navbar Brand */
@@ -178,6 +193,7 @@ section[data-testid="stSidebar"],
     display: flex;
     align-items: center;
     gap: 11px;
+    white-space: nowrap;
 }
 .brand-mark {
     width: 34px;
@@ -194,12 +210,14 @@ section[data-testid="stSidebar"],
     font-weight: 700;
     color: var(--ink-1);
     letter-spacing: -0.025em;
-    line-height: 1.1;
+    line-height: 1.15;
+    white-space: nowrap;
 }
 .brand-sub {
     font-size: 0.72rem;
     color: var(--ink-3);
     line-height: 1.2;
+    white-space: nowrap;
 }
 
 /* Crisp Interactive Buttons */
