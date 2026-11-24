@@ -4,7 +4,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: CC-BY-4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](CREDITS.md)
-[![Tests: 19/19 Passing](https://img.shields.io/badge/tests-19%2F19%20passing-brightgreen.svg)](tests/)
+[![Tests: 20/20 Passing](https://img.shields.io/badge/tests-20%2F20%20passing-brightgreen.svg)](tests/)
 [![Dataset: ESA Collision Avoidance](https://img.shields.io/badge/dataset-ESA%20Kelvins-orange.svg)](https://zenodo.org/records/4463683)
 [![Cutoff Isolation: Verified](https://img.shields.io/badge/leakage_isolation-verified-success.svg)](src/cutoff.py)
 
@@ -12,52 +12,54 @@
 
 ## 📌 Executive Summary
 
-With tens of thousands of active satellites and pieces of space debris orbiting Earth, satellite operators receive hundreds of **Conjunction Data Messages (CDMs)** from radar tracking networks every week. 
+With tens of thousands of active satellites and pieces of space debris orbiting Earth, satellite operators receive hundreds of **Conjunction Data Messages (CDMs)** from radar tracking networks every week.
 
 However, executing an orbital collision avoidance maneuver is not instantaneous:
-- Flight dynamics teams require **24 to 48 hours** to model delta-v vectors, assess thruster thermal constraints, perform orbital propagation, and uplink commands before satellite pass loss.
-- As a consequence, satellite operators face a strict **2.0-day Decision Cutoff**: by **$t = 2.0$ days before Time of Closest Approach (TCA)**, operators must irrevocably commit to either firing thrusters or standing down.
-- After this cutoff, operators enter the **Blind Zone** ($< 2.0$ days to TCA), during which subsequent radar updates arrive too late for planning.
+- Flight dynamics teams require **24 to 48 hours** to model $\Delta v$ vectors, assess thruster constraints, propagate orbits, and uplink commands before satellite pass loss.
+- As a consequence, operators face a strict **2.0-day Decision Cutoff**: by **$t = 2.0$ days before Time of Closest Approach (TCA)**, teams must irrevocably commit to either firing thrusters or standing down.
+- After this cutoff, operators enter the **Blind Zone** ($< 2.0$ days to TCA), where subsequent radar updates arrive too late for burn planning.
 
 ### The Operational Problem
-The space industry's standard operating procedure relies on **Baseline A (Persistence)**: assuming the collision probability reported in the last pre-cutoff CDM remains unchanged at TCA. 
+The industry's standard rule relies on **Baseline A (Persistence)**: assuming the collision probability in the last pre-cutoff CDM stays unchanged at TCA.
 
-On real European Space Agency (ESA) tracking data, this persistence baseline fails catastrophically:
-1. **Misses 28.8% of dangerous collisions (False Negatives):** Early tracking observations often exhibit large positional covariance dispersion that masks high collision probability until updates arrive within the blind zone ("late jumpers").
-2. **Orders hundreds of unnecessary burns (False Positives):** Temporary sensor noise or transient orbital geometry causes early risk spikes, wasting finite propellant, interrupting mission payloads, and costing up to **$50,000 per false alarm**.
+On real European Space Agency (ESA) tracking data, persistence fails on both sides of the trade-off:
+1. **Misses 28.8% of dangerous collisions (False Negatives):** Early radar observations often carry large positional covariance ellipses that mask high collision probability until updates arrive inside the blind zone ("late jumpers").
+2. **Orders hundreds of unnecessary burns (False Positives):** Transient sensor noise or early tracking geometry causes temporary risk spikes, wasting finite propellant, interrupting payloads, and costing up to **USD 50,000 per false alarm**.
 
-**NearMiss** replaces persistence with an autonomous, physics-informed machine learning pipeline. Using **only early tracking messages available $\ge 2.0$ days prior to TCA**, NearMiss predicts terminal collision risk, applies Platt probability calibration, outputs actionable confidence bands (`HIGH`, `MEDIUM`, `LOW`), and provides an interactive operations console.
+**NearMiss** replaces persistence with an autonomous, physics-informed machine learning pipeline. Using **strictly early tracking messages available $\ge 2.0$ days before TCA**, NearMiss predicts terminal collision risk, calibrates posterior probabilities via out-of-fold Platt scaling, assigns actionable confidence bands (`HIGH`, `MEDIUM`, `LOW`), and presents every decision in a clean, interactive operations console.
 
 ---
 
 ## 🎯 Key Benchmark Results
 
-NearMiss was trained on **11,942 valid conjunction events** (111,939 pre-cutoff CDMs) across 5 stratified folds and evaluated on both out-of-fold validation events and the official unpolluted **ESA Locked Competition Test Set** (2,167 events, 150 high-risk encounters):
+NearMiss was trained on **11,942 valid conjunction events** (111,939 pre-cutoff CDMs) across 5 stratified `event_id`-grouped folds and evaluated on both out-of-fold validation events and the official unpolluted **ESA Locked Competition Test Set** (2,167 events, 150 high-risk encounters):
 
 ### Out-of-Fold Validation Performance (Kelvins Filtered Cohort: 8,293 Events)
 
 | Metric | Baseline A (Persistence) | NearMiss Champion (Random Forest + Platt) | Operational Impact |
 | :--- | :---: | :---: | :--- |
-| **Missed Collisions (FN)** | **19** | **23** | Configurable via cost-sensitive threshold slider |
+| **Missed Collisions (FN)** | **19** | **23** | Configurable via interactive threshold simulator |
 | **Unnecessary Maneuvers (FP)** | **261** | **202** | **22.6% reduction in avoidable burns** |
-| **Recall (Sensitivity)** | **71.21%** | **65.15%** | Tuned for mission safety |
-| **Precision** | **15.26%** | **17.55%** | Higher actionable confidence |
-| **$F_2$ Score ($\beta = 2.0$)** | **0.4108** | **0.4224** | Weighted heavily towards catching collisions |
-| **PR-AUC** | **0.1803** | **0.1926** | Superior precision-recall trade-off curve |
-| **Brier Calibration Score** | 0.01724 | **0.00698** | **59.5% reduction in probability error** |
+| **Recall (Sensitivity)** | **71.21%** | **65.15%** | Balanced for mission safety |
+| **Precision** | **15.26%** | **17.55%** | Higher actionable maneuver confidence |
+| **$F_2$ Score ($\beta = 2.0$)** | **0.4108** | **0.4224** | Recall-weighted operational metric |
+| **PR-AUC** | **0.1803** | **0.1926** | Superior precision-recall curve |
+| **Brier Calibration Score** | 0.01724 | **0.00698** | **59.5% reduction in probability error** (filtered: `0.01662 → 0.00680`) |
 
-### Locked Test Set Performance (Official 2,167 Events, 150 Ground Truth High-Risk)
+### Locked Competition Test Set Performance (Official 2,167 Events, 150 High-Risk)
 
-| Metric | Baseline A (Persistence) | NearMiss Champion | Notes |
+| Metric | Baseline A (Persistence) | NearMiss Champion (RF + Platt) | Notes |
 | :--- | :---: | :---: | :--- |
-| **Evaluated Events** | 2,167 | 2,167 | 100% evaluated without label leakage |
-| **True Collisions Caught (TP)** | 115 | 107 | Maintained 71.3% recall on blind encounters |
-| **Avoided False Alarm Burns** | — | **+12 Burns Avoided** | Conserves precious satellite lifetime fuel |
-| **Rescued Conjunctions** | — | **+3 Events Rescued** | Caught collisions falsely cleared by Baseline A (Events 193, 735, 873) |
-| **High-Risk MSE ($y \ge -6.0$)** | 26.64 | **133.79** | Reduced with two-stage hurdle regressor |
+| **Evaluated Events** | 2,167 | 2,167 | 100% blind evaluation without label leakage |
+| **True Collisions Caught (TP)** | 115 | 107 | 71.33% recall on unseen competition encounters |
+| **Missed Collisions (FN)** | 35 | 43 | Tunable down to 29 FN (80.7% recall) at $p^* = 0.015$ |
+| **Unnecessary Maneuvers (FP)** | 63 | **54** | **+12 unnecessary burns avoided** vs Baseline A |
+| **Rescued Conjunctions** | — | **+3 Events Rescued** | Caught collisions falsely cleared by Baseline A (Events `#193`, `#735`, `#873`) |
+| **Precision** | 64.61% | **66.46%** | Higher actionable maneuver precision |
+| **$F_2$ Score ($\beta = 2.0$)** | 0.7391 | 0.7030 | Rises to **0.759** at $p^* = 0.015$ in Policy Simulator |
+| **PR-AUC** | 0.6651 | 0.6270 | Strong precision-recall ranking |
+| **High-Risk MSE ($y \ge -6.0$)** | 26.64 | **133.79** | Improved from 156.42 via two-stage hurdle regressor |
 | **Kelvins Official Score** | 36.05 | **190.30** | $\text{MSE}_{\text{high}} / F_2$ (improved from 213.50) |
-| **Precision** | 64.61% | **66.46%** | Higher maneuver confidence |
-| **PR-AUC** | 0.6651 | **0.6270** | Robust precision-recall curve |
 
 ---
 
@@ -80,77 +82,77 @@ flowchart TD
         VIS --> FEAT["src/features.py\n- Relative RTN dynamics & miss distance rates\n- Combined positional sigmas (target + chaser)\n- Covariance ellipsoid volume: sqrt(det(C))\n- Covariance contraction ratios\n- Historical risk min/max/slopes"]
     end
 
-    subgraph ML["4. Imbalance ML & Calibration"]
-        FEAT --> TRAIN["src/models.py\n- Balanced Random Forest\n- Scale-pos-weight LightGBM\n- Logistic Regression"]
+    subgraph ML["4. Imbalance ML, Hurdle Regression & Calibration"]
+        FEAT --> TRAIN["src/models.py\n- Balanced Random Forest (multi-cutoff augmented)\n- Two-Stage Conditional LightGBM Regressor\n- Logistic Regression & Scale-Pos-Weight LGBM"]
         TRAIN --> PLATT["src/calibrate.py\n- 1D Platt Sigmoid Calibration (-59.5% Brier)\n- F2-Optimal Threshold Tuning (p* = 0.03)\n- Operational Confidence (HIGH/MED/LOW)"]
     end
 
-    subgraph Export["5. Operational Console"]
+    subgraph Export["5. Operations Console"]
         PLATT --> REC["src/recommend.py\nExport Section 6 Schema Parquets"]
-        REC --> APP["app/streamlit_app.py\nDark Mission Control Dashboard"]
+        REC --> APP["app/streamlit_app.py\n4-View Optical Aerospace Console\n+ Live 60fps Orbital Burn Simulator"]
     end
 ```
 
 ### 1. Strict Cutoff & Anti-Leakage Isolation
-To prevent look-ahead bias, **no feature, model, or evaluation code ever reads raw CSVs directly**. 
+To prevent look-ahead bias, **no feature, model, or evaluation code ever reads raw CSVs directly**.
 - Data flows strictly through `src/cutoff.py`, discarding all CDMs with `time_to_tca < 2.0` days.
-- Ingestion enforces multi-column descending order sorting (`event_id`, `time_to_tca`) to guarantee ground truth is extracted strictly from the terminal approach CDM.
-- 1,212 events with zero pre-cutoff tracking messages are systematically quarantined per operational rules.
+- Multi-column descending sorting (`event_id`, `time_to_tca`) guarantees ground truth is extracted strictly from the terminal approach CDM.
+- 1,212 events with zero pre-cutoff tracking messages are quarantined per operational rules.
+- Multi-cutoff training augmentation (`train_cutoffs: [2.0, 2.5, 3.0]`) stays strictly inside training folds with zero cross-fold `event_id` leakage.
 
 ### 2. Orbital Covariance & Physics Feature Engineering (73 Features)
 Raw CDMs provide relative state vectors in the Radial-Transverse-Normal (RTN) reference frame along with full $6 \times 6$ covariance matrices. NearMiss extracts:
-- **Combined Positional Uncertainty:** Total RSS dispersion across both primary and secondary spacecraft:
+- **Combined Positional Uncertainty:** Root-sum-square dispersion fusing primary and secondary spacecraft:
   $$\sigma_{\text{pos}} = \sqrt{\sigma_{r1}^2 + \sigma_{r2}^2 + \sigma_{t1}^2 + \sigma_{t2}^2 + \sigma_{n1}^2 + \sigma_{n2}^2}$$
-- **Covariance Ellipsoid Volume:** 3D uncertainty volume $\sqrt{\det(C)}$ capturing orbit determination accuracy.
+- **Covariance Ellipsoid Volume:** 3D positional uncertainty volume $\sqrt{\det(C)}$ measuring orbit determination precision.
 - **Volume Contraction Ratio:** Rate of uncertainty volume shrinkage over successive radar passes:
   $$\text{Contraction} = \frac{\text{Volume}_{\text{latest}}}{\text{Volume}_{\text{earliest}}}$$
-  *(A rapidly shrinking covariance with constant miss distance indicates high-probability orbital intersection).*
-- **Trajectory Geometry:** Miss distance rate-of-change, velocity dispersion ratios, and space weather solar activity indices ($F_{10.7}$, $A_p$).
+  *(Rapidly shrinking covariance with persistent close miss distance signals high-probability orbital intersection.)*
+- **Trajectory Dynamics & Two-Stage Risk Regression:** Miss-distance velocity gradients, risk escalation slopes, space weather indices ($F_{10.7}$, $A_p$), and a two-stage hurdle regressor separating the `-30.0` numerical floor from active collision risk.
 
 ### 3. Platt Probability Calibration & Operational Confidence Bands
-Uncalibrated tree ensembles produce raw scores biased by class weighting. NearMiss applies out-of-fold Platt sigmoid scaling:
-- **Brier Score Drop:** From $0.01724 \rightarrow 0.00698$ (**59.5% error reduction**).
-- **Decision Threshold Optimization:** Evaluated across the full precision-recall space to maximize operational $F_2$, yielding $p^* = 0.0300$ (matching the ~0.80% base rate of high-risk events).
+Uncalibrated tree ensembles produce raw scores distorted by class balancing. NearMiss applies out-of-fold Platt sigmoid scaling:
+- **Brier Score Drop:** From `0.01724 → 0.00698` on full OOF (**-59.5% error reduction**) and `0.01662 → 0.00680` on the filtered cohort.
+- **Decision Threshold Optimization:** Swept across precision-recall space to maximize operational $F_2$, yielding $p^* = 0.0300$ (aligned with the ~0.80% high-risk base rate).
 - **Three-Tier Operational Confidence Bands:**
-  - `HIGH` Confidence ($|p - p^*| \ge 0.25$): Definite burn or safe clear.
-  - `MEDIUM` Confidence ($0.10 \le |p - p^*| < 0.25$): Enhanced operator review.
-  - `LOW` Confidence ($|p - p^*| < 0.10$): Ambiguous encounter geometry; triggers automatic radar re-tasking.
+  - `HIGH` ($|p - p^*| \ge 0.25$): Clear burn or stand-down margin.
+  - `MEDIUM` ($0.10 \le |p - p^*| < 0.25$): Enhanced flight dynamics review.
+  - `LOW` ($|p - p^*| < 0.10$): Borderline geometry; triggers urgent radar re-tasking.
 
 ---
 
-## 🖥️ Operational Dashboard Walkthrough
+## 🖥️ Operations Console Walkthrough
 
-The production dashboard is built with **Streamlit** and styled with an operational dark theme (`#090D16` deep space background, `#111827` surface cards, `#38BDF8` telemetry cyan, `#EF4444` maneuver red, and `#10B981` nominal green).
+The Streamlit web application ([`app/streamlit_app.py`](app/streamlit_app.py)) uses a high-clarity **Optical Aerospace Light** design system (`#F4F6FA` architectural canvas, `#FFFFFF` instrument surfaces, `#1B4DFF` Aerospace Cobalt accent, and strictly semantic `#D92D20` crimson / `#067647` emerald statuses) with a single unified full-width top navigation bar (no redundant sidebar) and global cohort switcher (`Validation (2,389)` ↔ `Blind Test (2,167)`).
 
-### Tab 1: Conjunction Event Inspector
-- **Event Filter & Search Drawer:** Instant filtering across 14,109 events by recommendation (`MANOEUVRE` / `NO_MANOEUVRE`), confidence tier, and Event ID.
-- **Decision Ribbon:** Side-by-side comparison of NearMiss recommendation, calibrated probability, confidence level, predicted final log risk, and the legacy Baseline A recommendation.
-- **Interactive Plotly Risk Trajectory:**
-  - $x$-axis: Days until TCA ($7.0$ down to $0.0$ days).
-  - Pre-cutoff visible CDM markers up to the $2.0$-day decision cutoff.
-  - Shaded gray **Blind Zone** ($< 2.0$ days to TCA).
-  - **"Reveal Ground Truth" Toggle (Demo Mode):** Reveals post-cutoff CDMs and the true encounter outcome for post-event analysis.
-- **Conjunction Geometry Track:** 2D encounter miss distance history across successive CDM updates.
+### 1. Overview (Mission Briefing & Interactive Simulator)
+- **Live 60fps Interactive Orbital Conjunction Simulator:** Animated HTML5 canvas depicting Target Satellite and Debris Chaser orbits converging across the T-48h cutoff into a contracting uncertainty ellipsoid—with working **Simulate Avoidance Burn ($\Delta v$)** and **Replay** buttons that fire a maneuver and deflect the satellite out of the collision corridor in real time.
+- **Impact Metrics & Real-Data Showcase:** Four crisp summary cards (`14,109` audited events, `48h` horizon, `-59.5%` Brier drop, `-22.6%` burns cut), an interactive head-to-head encounter switcher (`Avoided False Alarm` vs `Caught Late Collision`), 3-stage pipeline cards, and a plain-language operator reference footer.
 
-### Tab 2: Threshold & Cost Simulator
-- Real-time slider for the operational cost ratio:
-  $$\text{Cost Ratio} = \frac{C_{\text{Missed Collision}}}{C_{\text{Unnecessary Maneuver}}}$$
-- Dynamic confusion matrix recalculation, displaying lives saved, avoided propellant expenditure, and net mission savings against baseline persistence.
+### 2. Event Inspector
+- **Quick-Jump Bar & Filters:** One-click jumps to flagship rescued collisions, saved fuel burns, and highest-risk encounters, plus filters by recommendation (`MANOEUVRE` / `NO_MANOEUVRE`), confidence (`HIGH` / `MEDIUM` / `LOW`), and Event ID.
+- **Verdict Strip:** Compares NearMiss recommendation, calibrated probability, confidence tier, and forecast TCA risk side-by-side against Baseline A (Persistence).
+- **Overlap-Free Synchronized Plotly Trajectories:** Collision Risk Trajectory and Relative Miss Distance Profile with `T-48h Cutoff` and `Blind Zone (<48h)` headers anchored cleanly above the plot area, legend-backed `1 in 1M Alert (-6.0)` threshold line, split-isolated CDM history (fixing 405 colliding event IDs between validation and test), expandable CDM telemetry log, and an interactive **Reveal post-cutoff outcome (Blind Zone)** toggle.
 
-### Tab 3: Model Benchmark & Reliability
-- Complete static Kelvins competition scorecards, reliability diagrams (pre vs post-calibration), and physics feature attribution.
+### 3. Policy Simulator
+- **Spacecraft Profile Presets:** One-click switching across `SmallSat`, `Earth Obs`, and `Flagship` mission economics profiles.
+- **Interactive Threshold ($p^*$) & Cost Controls:** Live slider (`0.005`–`0.250`) and risk-weighted miss penalty / burn cost inputs dynamically updating the **Operational Risk Frontier** (FN vs FP curve), Recall / FN / FP / $F_2$ KPIs, expected financial balance vs Baseline A, and side-by-side confusion matrices.
+
+### 4. Benchmarks
+- **Full-Width Unclipped Scorecards:** Complete Locked ESA Blind Test Set and 5-Fold Out-of-Fold Cross-Validation comparison tables.
+- **Interactive Calibration & Explainability:** Live Plotly **Platt Probability Calibration Reliability** curve computed directly from `calibrated_oof.parquet`, paired with a two-tone interactive **Global Tree SHAP Feature Drivers** chart and orbital physics reference cards.
 
 ---
 
 ## 🔍 Model Interpretability (Global Tree SHAP)
 
-Global feature importance was computed across the champion ensemble using **Tree SHAP** (`reports/figures/shap_importance.png`):
+Global feature attribution was computed across the champion Random Forest using **Tree SHAP** (visualized interactively in the **Benchmarks** view and exported to `reports/figures/shap_importance.png` and `reports/figures/shap_summary_beeswarm.png`):
 
-1. **`latest_log_risk` & `log_risk_max`:** Primary indicators of baseline collision probability.
-2. **`uncertainty_volume_latest` & `vol_contraction_ratio`:** The physical size and rate of collapse of the tracking covariance ellipsoid.
-3. **`sigma_3d_latest` & `combined_sigma_pos`:** Combined 3-axis positional dispersion between target and chaser.
-4. **`miss_distance_latest` & `miss_dist_trend`:** Encounter geometry and trajectory divergence rate.
-5. **`cdm_count` & `time_to_tca_min`:** Tracking observation cadence and temporal freshness.
+1. **`latest_log_risk` (`0.1186`) & `risk_max` (`0.0597`):** Latest pre-cutoff and peak observed collision probability.
+2. **`latest_max_risk_estimate` (`0.0546`) & `latest_max_risk_scaling` (`0.0517`):** Analytical upper-bound collision envelope and covariance scaling factor.
+3. **`risk_mean` (`0.0428`) & `risk_min` (`0.0246`):** Sustained baseline level across early radar passes.
+4. **`risk_total_change` (`0.0185`) & `risk_slope_per_day` (`0.0116`):** Trajectory escalation rate leading into the T-48h cutoff.
+5. **`latest_time_to_tca` (`0.0072`) & `latest_uncertainty_volume` (`0.0067`):** Tracking freshness and 3D positional covariance ellipsoid volume $\sqrt{\det(C)}$.
 
 ---
 
@@ -159,7 +161,7 @@ Global feature importance was computed across the champion ensemble using **Tree
 ### 1. Environment Setup
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/NearMiss.git
+git clone https://github.com/NotNirav/NearMiss.git
 cd NearMiss
 
 # Create and activate virtual environment (Python 3.11+)
@@ -175,12 +177,12 @@ pip install -r requirements.txt
 ```
 
 ### 2. Run Test Suite
-All 18 tests execute in under 5 seconds, validating zero leakage, group split isolation, feature schema invariance, calibration bounds, and dashboard contract compliance:
+All **20 automated tests** execute in ~6 seconds, validating cutoff isolation, zero event-ID overlap, feature leakage invariance, multi-cutoff CV group isolation, Platt calibration bounds, production parquet schemas, and dashboard CDM split isolation:
 ```bash
 pytest -v
 ```
 
-### 3. Launch Operational Dashboard
+### 3. Launch Operations Console
 ```bash
 streamlit run app/streamlit_app.py
 ```
@@ -192,14 +194,16 @@ Open your browser at `http://localhost:8501`.
 
 ```
 NearMiss/
+├── .streamlit/
+│   └── config.toml              # Optical Aerospace Light theme configuration
 ├── app/
-│   └── streamlit_app.py         # Full operational Streamlit dashboard (Tabs 1-3)
+│   └── streamlit_app.py         # 4-view Streamlit operations console + live 60fps orbital simulator
 ├── src/
 │   ├── load.py                  # Strict single-point CSV reader & Parquet I/O
 │   ├── cutoff.py                # 2.0-day leak-proof cutoff & target extractor
 │   ├── split.py                 # Grouped & stratified 5-fold splitter (zero overlap)
 │   ├── features.py              # 73 orbital physics, trajectory & covariance features
-│   ├── models.py                # Classifier & regressor trainers (LogReg, RF, LightGBM)
+│   ├── models.py                # Classifiers & two-stage conditional hurdle regressor
 │   ├── calibrate.py             # Platt scaling, threshold optimizer & confidence bands
 │   ├── evaluate.py              # Kelvins official score, F2, PR-AUC & threshold sweep
 │   └── recommend.py             # Production dashboard parquet exporter (Section 6 schema)
@@ -208,10 +212,10 @@ NearMiss/
 │   ├── test_no_leakage.py       # Cutoff isolation, eval filter & zero overlap assertions
 │   ├── test_evaluate.py         # Metric calculation & Kelvins score tests
 │   ├── test_features.py         # Feature schema & leakage invariance tests
-│   ├── test_models.py           # CV model training & residual formula tests
+│   ├── test_models.py           # CV model training, multi-cutoff isolation & residual tests
 │   ├── test_calibrate.py        # Platt scaling & confidence threshold tests
 │   ├── test_recommend.py        # Production parquet contract tests
-│   └── test_app.py              # Dashboard data loader & split filtering tests
+│   └── test_app.py              # Dashboard loader, split filtering & CDM split-isolation tests
 ├── reports/
 │   ├── results.md               # Full benchmark tables (Out-of-Fold & Locked Test)
 │   ├── assumptions.md           # Schema audit & 6 verified ESA dataset properties
@@ -237,7 +241,7 @@ NearMiss was engineered under strict production-grade rules:
 - [x] **Locked Test Set Quarantine:** Zero hyperparameter tuning, threshold sweeping, or Platt calibrator fitting performed on test data.
 - [x] **No Magic Numbers:** All cutoffs, thresholds, paths, and random seeds read dynamically from `config.yaml`.
 - [x] **Fit on Training Data Only:** All imputers, scalers, and calibrators fitted inside training folds only.
-- [x] **Actionable Metrics:** Never reporting misleading raw accuracy on heavily imbalanced conjunction data ($~0.80\%$ base rate); headline metrics are Missed Collisions (FN), Avoidable Burns (FP), Recall, Precision, $F_2$, PR-AUC, and High-Risk MSE.
+- [x] **Actionable Metrics:** Never reporting misleading raw accuracy on heavily imbalanced conjunction data (~0.80% base rate); headline metrics are Missed Collisions (FN), Avoidable Burns (FP), Recall, Precision, $F_2$, PR-AUC, and High-Risk MSE.
 - [x] **Attribution:** Clean reimplementation of physical covariance formulas; all papers and datasets fully cited in [CREDITS.md](CREDITS.md).
 
 ---

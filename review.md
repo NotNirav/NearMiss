@@ -254,23 +254,20 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 
 ### 1. Summary of What Was Done
 - Implemented full interactive Streamlit dashboard (`app/streamlit_app.py`) fulfilling all requirements from Master Build Plan Section 9:
-  - **Optical Aerospace Light Theme**: Replaced dark-neon styling with a restrained high-clarity Swiss flight-manual palette in `.streamlit/config.toml` (`#F5F7FA` canvas, `#FFFFFF` instrument surfaces, `#111827` charcoal ink, `#1B4DFF` Aerospace Cobalt primary accent, and strictly semantic `#D92D20` crimson / `#067647` emerald operational statuses) paired with `DM Sans` and `IBM Plex Mono`.
-  - **Top Bar & Navigation**: Fixed cluttered header by creating a unified command header and top navigation bar with 4 views (`Overview`, `Event Inspector`, `Policy Simulator`, `Benchmarks & Physics`).
-  - **Overview (Mission Briefing Landing Page)**: Added high-impact executive landing page with problem overview (T-48h blind zone), interactive CTA quick-links, live monitored encounter KPIs, 4-step pipeline cards, verified outcomes, and one-click quick-jumps to featured case studies (Rescued Event #873, Avoided False Alarm #409).
-  - **Event Inspector**: Re-architected layout to eliminate blank voids:
-    - Searchable/filterable conjunction selector with active search and recommendation filters.
-    - Decision HUD displaying NearMiss recommendation vs Baseline A, Platt-calibrated probability, hurdle risk estimate, and confidence tiers (`HIGH`, `MEDIUM`, `LOW`).
-    - Synchronized side-by-side Plotly charts: Risk Trajectory (with shaded T-48h blind zone and ground-truth reveal toggle) and Relative Miss Distance Profile across passes.
-  - **Policy Simulator**: Constellation economics simulator with 3 industry presets (SmallSat, Earth Observation, High-Value Infrastructure), interactive threshold slider ($p^*$), live frontier trade-off curve, and confusion matrix cards.
-  - **Benchmarks & Physics**: Full-width ESA Kelvins scorecards, Platt calibration curves, Tree SHAP attributions, and orbital physics cards (preventing squished/clipped tables).
-  - **Sidebar Polish**: Clean branding, evaluation cohort radio with descriptive event count card, quick-jump encounter buttons, and formatted operator threshold guide (replaced raw LaTeX `10^{-6}` strings with clean unicode `10⁻⁶`).
-- Added automated unit test suite in `tests/test_app.py` validating data loading contracts, split availability, and history cross-referencing.
-- Verified headless execution, import integrity, and strict `read_csv` isolation.
+  - **Optical Aerospace Light Theme**: Replaced dark-neon styling with a restrained high-clarity Swiss flight-manual palette in `.streamlit/config.toml` (`#F5F7FA` base theme / `#F4F6FA` canvas, `#FFFFFF` instrument surfaces, `#0F172A` slate ink, `#1B4DFF` Aerospace Cobalt primary accent, and strictly semantic `#D92D20` crimson / `#067647` emerald operational statuses) paired with `DM Sans` and `IBM Plex Mono`.
+  - **Unified Top Navigation Bar (Sidebar Removed)**: Removed the redundant sidebar and Streamlit's invisible 60px click-blocking `stHeader` overlay (`display: none; pointer-events: none`), centered the `NearMiss` brand vertically inside `.st-key-navbar_shell`, and unified 4 views (`Overview`, `Event Inspector`, `Policy Simulator`, `Benchmarks`) with the global cohort switcher (`Validation (2,389)` ↔ `Blind Test (2,167)`).
+  - **Overview (Landing Page)**: Spacious mission briefing featuring a live 60fps HTML5 canvas **Interactive T-48h Orbital Conjunction & Avoidance Burn ($\Delta v$) Simulator**, 4 impact KPI cards, an interactive real-data encounter showcase (`Avoided False Alarm` vs `Caught Late Collision`), 3-stage pipeline cards, and a plain-language operator reference footer.
+  - **Event Inspector**: Quick-jump buttons to flagship encounters, searchable/filterable conjunction selector, single-row Verdict Strip vs Baseline A, overlap-free Plotly **Risk Trajectory** and **Relative Miss Distance** charts (top-margin horizon labels above plot box, legend-backed alert threshold, tight x-axis bounds, and split-isolated CDM history), expandable CDM telemetry log, and Blind-Zone Ground-Truth Reveal toggle.
+  - **Policy Simulator**: Spacecraft profile presets (`SmallSat`, `Earth Obs`, `Flagship`), interactive threshold slider ($p^*$), risk-weighted miss penalty and burn cost inputs, live FN/FP operational frontier curve, expected financial balance vs Baseline A, and side-by-side confusion matrices.
+  - **Benchmarks**: Full-width unclipped ESA Blind Test and 5-Fold Cross-Validation tables, live interactive Plotly **Platt Probability Calibration Reliability** curve (`calibrated_oof.parquet`), two-tone interactive **Global Tree SHAP Feature Drivers** chart, and orbital physics cards.
+- Added automated unit test suite in `tests/test_app.py` validating data loading contracts, split availability, and CDM history split isolation (`test_history_split_isolation`).
+- Verified headless execution, live browser click hit-testing (`blockedCount: 0`), real mouse clicks across all interactive controls, visual screenshots of every view, and strict `read_csv` isolation.
 
 ### 2. Tests Passed
 - `tests/test_app.py::test_app_data_loading`: PASSED
 - `tests/test_app.py::test_app_split_filtering`: PASSED
-- All 19 project unit tests passed cleanly in pytest.
+- `tests/test_app.py::test_history_split_isolation`: PASSED
+- All 20 project unit tests passed cleanly in pytest.
 - Gate checks: `python -m py_compile app/streamlit_app.py` PASSED; zero `read_csv` occurrences outside `src/load.py`.
 
 ### 3. Bugs Fixed
@@ -302,7 +299,7 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
 - Validated all 10 items in Section 13 Definition of Done.
 
 ### 2. Tests Passed
-- Full automated test suite: 19 passed in 7.40s across all test modules (`test_setup.py`, `test_no_leakage.py`, `test_evaluate.py`, `test_features.py`, `test_models.py`, `test_calibrate.py`, `test_recommend.py`, `test_app.py`), including multi-cutoff fold group isolation verification.
+- Full automated test suite: 20 passed in 6.78s across all test modules (`test_setup.py`, `test_no_leakage.py`, `test_evaluate.py`, `test_features.py`, `test_models.py`, `test_calibrate.py`, `test_recommend.py`, `test_app.py`), including multi-cutoff fold group isolation and CDM history split-isolation verification.
 - Gate check: zero occurrences of `read_csv` anywhere outside `src/load.py`.
 
 ### 3. Bugs Fixed
@@ -321,5 +318,5 @@ A comprehensive test of the entire NearMiss system was conducted across all 10 p
 2. **Splitting & Group Isolation**: Confirmed that 14,109 events are partitioned into stratified folds and a locked test set with 0 event_id collisions.
 3. **Feature Engineering**: Validated that all 73 trajectory, dynamics, and covariance physics features are invariant to future tracking CDMs.
 4. **Model Training & Platt Calibration**: Confirmed that 5-fold cross-validation and Platt scaling reduce calibration Brier error by 59.5% and tune decision thresholds cleanly.
-5. **Dashboard & User Interface**: Streamlit application compiles cleanly, loads real parquet outputs, provides multi-split inspection, renders Plotly trajectories with blind zone shading, and supports interactive threshold cost simulations.
-6. **All 19 unit tests passing**: 100% test pass rate with strict isolation.
+5. **Dashboard & User Interface**: Streamlit application compiles cleanly, loads real parquet outputs with split-isolated CDM histories, provides a single unified top navigation bar (no redundant sidebar) with a centered brand mark and live 60fps interactive orbital burn simulator, overlap-free Plotly trajectories with blind-zone reveal, interactive policy/economics simulation, and live Platt calibration & SHAP diagnostics—all visually and interactively verified in Chrome with zero blocked clicks.
+6. **All 20 unit tests passing**: 100% test pass rate with strict cutoff and split isolation.

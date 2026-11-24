@@ -1,67 +1,56 @@
 # NearMiss (SW-5) — 2-Minute Operational Demonstration Script
 
-**Objective:** Demonstrate autonomous satellite collision risk prediction under strict operational cutoff constraints using real European Space Agency (ESA) Conjunction Data Messages.
+**Objective:** Demonstrate autonomous satellite collision risk prediction under strict 48-hour operational cutoff constraints using real European Space Agency (ESA) Conjunction Data Messages.
 
 ---
 
-### [00:00 - 00:25] 1. The Operational Problem & The Decision Cutoff
-- **Visual:** Open Streamlit Dashboard Top Ribbon (`http://localhost:8501`). Point to the **Decision Cutoff: 2.0 Days** metric and top KPI cards.
-- **Presenter:**
-  > "In modern Low Earth Orbit operations, satellite operators receive dozens of Conjunction Data Messages (CDMs) from tracking radar networks every week. But planning, commanding, and executing an orbital avoidance burn takes between 24 and 48 hours.
-  >
-  > At **2.0 days before closest approach**, operators enter a dangerous **'Blind Zone'**: you must commit to burning fuel or standing down based solely on early, uncertain tracking data.
-  >
-  > Today, operators rely on **Baseline A (Persistence)**: assuming the last visible CDM risk remains constant. But persistence misses **28.8% of dangerous events** and triggers hundreds of unnecessary manoeuvres that deplete mission lifespans. NearMiss solves this."
-
----
-
-### [00:25 - 00:55] 2. Dangerous Event End-to-End (Rescuing a Collision)
-- **Visual:** Navigate to **Tab 1: Conjunction Event Inspector**. In the search bar, type `873` (or filter by `recommendation: MANOEUVRE`).
+### [00:00 - 00:30] 1. The 48-Hour Blind Zone & Live Orbital Simulator
+- **Visual:** Open **Overview** (`http://localhost:8501`). Point to the top navigation bar and the live **Interactive T-48h Orbital Conjunction** canvas on the right.
 - **Screen Action:**
-  - Decision banner highlights: `MANOEUVRE` (Red), Calibrated Risk: `43.8%`, Confidence: `HIGH`.
-  - Baseline comparison highlights: `Baseline A: NO_MANOEUVRE` (Green/Safe).
-  - Hover over the Plotly **Risk Trajectory**: show the pre-cutoff observation points ending at 2.0 days with risk $\approx -6.01$ (just below the $10^{-6}$ warning threshold).
-  - Point to the dashed vertical line at $2.0$ days and shaded gray region: the **Blind Zone**.
-  - Toggle **"Reveal Ground Truth"**: the trajectory enters the blind zone, risk jumps to $-5.84$ ($> 10^{-6}$), and the collision probability spikes!
+  - Click **Simulate Avoidance Burn ($\Delta v$)** on the live orbital canvas. Watch the target satellite fire a thruster burn prior to T-48h, smoothly deflecting away from the crimson debris cone (`185 m` → `4,820 m`, status flips from `CONJUNCTION ALERT` to `ORBIT CLEARED`).
 - **Presenter:**
-  > "Notice Event 873. At the 2.0-day cutoff, the latest reported risk was 1 in 1.02 million (-6.01). Baseline persistence declared this conjunction SAFE, ordering NO_MANOEUVRE.
+  > "Satellite operators receive hundreds of Conjunction Data Messages every week, yet planning and uplinking an avoidance burn takes 24 to 48 hours. Once an encounter crosses **T-48h**, teams enter the **Blind Zone** where late radar updates arrive too late to act.
   >
-  > But NearMiss analyzed 73 orbital features: the combined positional covariance ellipsoid was contracting at 14% per hour, and relative velocity vectors confirmed dead-center approach geometry. NearMiss flagged this as a high-confidence MANOEUVRE.
-  >
-  > When we reveal ground truth, the risk escalated sharply within the blind zone. NearMiss prevented a catastrophic orbital collision that the industry-standard baseline missed."
+  > Industry standard **Baseline A (Persistence)** assumes the last pre-cutoff risk stays flat—missing **28.8% of dangerous collisions** while triggering hundreds of costly false-alarm burns. NearMiss uses 73 orbital covariance physics features strictly from early passes to decide before the cutoff."
 
 ---
 
-### [00:55 - 01:25] 3. Harmless Event (Eliminating False Alarms)
-- **Visual:** Filter by `recommendation: NO_MANOEUVRE` and select an event where Baseline A alarmed (e.g., Event with early temporary risk spike).
+### [00:30 - 01:00] 2. Rescuing a Late-Jumping Collision (Blind Test Event `#873`)
+- **Visual:** In the top navigation bar, switch the cohort toggle to **Blind Test (2,167)**, then click **Event Inspector**. Click the quick-jump button **Caught Collision #873** (one of 3 blind-test collisions rescued from Baseline A).
 - **Screen Action:**
-  - Show Decision Banner: `NearMiss: NO_MANOEUVRE` vs `Baseline A: MANOEUVRE`.
-  - Show Miss Distance Chart: miss distance is widening from $1.2\text{ km}$ out to $14\text{ km}$.
-  - Toggle "Reveal Ground Truth": actual final risk decays to $-30.0$ (numerical zero).
+  - Verdict bar displays: `Command Avoidance Burn`, Calibrated Risk Odds: `22.43%`, `Medium Confidence`, while **Baseline A** says `Stand Down` (`Last visible: -6.01`).
+  - Point to the **Collision Risk Trajectory**: 15 pre-cutoff passes sit right below the 1-in-1M alert line (`-6.0`) up to the dashed **T-48h Cutoff**.
+  - Toggle **Reveal post-cutoff outcome (Blind Zone)**: banner flips to **`True Positive — Hazard Caught`**, and the actual terminal risk jumps across the threshold to **`-5.89`**.
 - **Presenter:**
-  > "Every unnecessary collision avoidance burn wastes precious delta-v, interrupts satellite science payloads, and costs up to $50,000 in ground operations and lost commercial uptime.
+  > "Look at Event 873 from the blind ESA competition test set. At T-48h, the latest radar pass sat at `-6.01`—just below 1 in a million—so Baseline Persistence cleared it as safe.
   >
-  > In this event, early sensor noise produced a false risk spike above 1 in 100,000, triggering Baseline A to burn. But NearMiss recognized that the uncertainty volume was expanding and miss distance was growing. Our Platt-calibrated probability remained at 0.3%, safely saving the burn."
+  > NearMiss read the tightening covariance geometry across 15 passes and ordered an avoidance burn early. When we reveal the blind zone, risk crossed directly into the hazard zone at `-5.89`. NearMiss caught a collision that legacy persistence missed."
 
 ---
 
-### [01:25 - 01:45] 4. Operational Cost Simulator & Benchmark Comparison
-- **Visual:** Switch to **Tab 2: Threshold & Cost Simulator**.
+### [01:00 - 01:25] 3. Preventing a Costly False-Alarm Burn (Blind Test Event `#560`)
+- **Visual:** Click the quick-jump button **Saved Fuel Burn #560** in **Event Inspector**.
 - **Screen Action:**
-  - Drag the Cost Ratio slider ($C_{\text{Missed Collision}} / C_{\text{Wasted Burn}}$) from $100\times$ to $500\times$.
-  - Watch the live confusion matrix and Net Savings update dynamically.
+  - Verdict bar displays: `Stand Down — Nominal` (`5.02%`) vs **Baseline A**: `Order Burn` (`Last visible: -3.73`).
+  - Toggle **Reveal post-cutoff outcome (Blind Zone)**: **`True Negative — Safe Clearance`**—actual risk plunges from `-3.73` all the way down to **`-26.17`** (matching NearMiss's `-20.38` hurdle forecast).
 - **Presenter:**
-  > "Operators can tailor NearMiss to their specific mission risk tolerance. On our 5-fold cross-validation and the locked ESA competition test set:
-  > - Random Forest with balanced subsampling and Platt scaling reduced Brier calibration error by **59.5%**.
-  > - It avoids **22.6% of unnecessary burns** while maintaining high detection sensitivity on genuine high-risk encounters."
+  > "On the flip side, Event 560 had an early risk spike of `-3.73`, forcing Baseline A to command a fuel-draining burn. NearMiss recognized transient uncertainty and stood down. Inside the blind zone, actual risk collapsed to `-26.17`—saving propellant and mission uptime. Across the blind test set, NearMiss avoided 12 unnecessary burns, and cut false alarms by 22.6% out-of-fold."
 
 ---
 
-### [01:45 - 02:00] 5. Limitations & Future Roadmap
-- **Visual:** Switch to **Tab 3: Model Benchmark & Calibration**. Scroll to SHAP Feature Importance chart (`shap_importance.png`).
+### [01:25 - 01:45] 4. Mission Economics & Operational Threshold Simulator
+- **Visual:** Click **Policy Simulator** in the top navigation bar (with **Blind Test (2,167)** active).
+- **Screen Action:**
+  - Switch **Spacecraft Profile** from `SmallSat` to `Earth Obs` ($p^* = 0.015$).
+  - Highlight the KPI strip: Recall rises to **80.7%** (`121 of 150` hazards caught, `-6` fewer missed hazards than Baseline A), **$F_2 = 0.759$** (beating Baseline `0.739`), and expected financial balance reaches **`USD +5,145,000 (+12.0%)`** on the live FN/FP frontier and confusion matrices.
 - **Presenter:**
-  > "Global SHAP attribution confirms the model relies on physical covariance determinants and dynamic miss-distance rates, not spurious data artifacts.
+  > "Operators don't need a one-size-fits-all cutoff. Because NearMiss outputs calibrated probabilities, flight teams can pick their spacecraft profile or tune $p^*$ directly on the FN-versus-FP trade-off frontier—beating Baseline A on both recall and $F_2$ when tuned for high-value Earth observation assets."
+
+---
+
+### [01:45 - 02:00] 5. Calibration Reliability, SHAP Physics & Limitations
+- **Visual:** Click **Benchmarks** in the top navigation bar and scroll to the interactive **Platt Probability Calibration Reliability** and **Global Feature Drivers (Tree SHAP)** charts.
+- **Presenter:**
+  > "Platt scaling cuts Brier calibration error by **59.5%**, bringing predicted odds right onto the diagonal, and Tree SHAP confirms the model relies on physical trajectory and covariance envelope features (`latest_log_risk`, `latest_max_risk_estimate`, `latest_uncertainty_volume`) rather than spurious artifacts.
   >
-  > **Limitations:** Extreme 'late jumpers'—events with zero tracking updates between 7 days and 1 day—cannot be anticipated without sensor tasking. That is why NearMiss exports explicit **Confidence Bands** (`HIGH`, `MEDIUM`, `LOW`): when confidence is LOW, our system automatically commands urgent radar re-acquisition.
-  >
-  > NearMiss turns raw CDMs into actionable, explainable orbital safety decisions."
+  > **Limitation & Safeguard:** Extreme late jumpers with sparse early radar passes remain fundamentally uncertain—which is why NearMiss attaches explicit **High / Medium / Low Confidence** tiers so Low-confidence events immediately trigger additional radar tracking."
