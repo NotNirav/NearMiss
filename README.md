@@ -4,7 +4,7 @@
 
 [![Live App: nearmiss.streamlit.app](https://img.shields.io/badge/Live_App-nearmiss.streamlit.app-1B4DFF?style=for-the-badge)](https://nearmiss.streamlit.app)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: CC-BY-4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](CREDITS.md)
+[![License: CC-BY-4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](docs/CREDITS.md)
 [![Tests: 20/20 Passing](https://img.shields.io/badge/tests-20%2F20%20passing-brightgreen.svg)](tests/)
 [![Dataset: ESA Collision Avoidance](https://img.shields.io/badge/dataset-ESA%20Kelvins-orange.svg)](https://zenodo.org/records/4463683)
 [![Cutoff Isolation: Verified](https://img.shields.io/badge/leakage_isolation-verified-success.svg)](src/cutoff.py)
@@ -24,8 +24,8 @@ Everything needed to evaluate **NearMiss** is linked directly below — no folde
 | **Full Benchmark Tables** | **[Key Results](#-key-benchmark-results)** · [`reports/results.md`](reports/results.md) | Out-of-fold CV (8,293 events) + Locked ESA Blind Test (2,167 events, 150 high-risk) |
 | **Anti-Leakage & Cutoff Proof** | [`src/cutoff.py`](src/cutoff.py) · [`tests/test_no_leakage.py`](tests/test_no_leakage.py) | Hard `time_to_tca >= 2.0d` barrier + 20/20 automated zero-leakage tests |
 | **Error Analysis & SHAP** | [`notebooks/02_error_analysis.ipynb`](notebooks/02_error_analysis.ipynb) · [`shap_importance.png`](reports/figures/shap_importance.png) | Blind test error drilldowns + physical covariance drivers |
-| **Phase Review & Build Log** | [`review.md`](review.md) | Complete Phase 00–10 summary, bugs fixed, and verification gates |
-| **Dataset Audit & Credits** | [`reports/assumptions.md`](reports/assumptions.md) · [`CREDITS.md`](CREDITS.md) | Verified ESA schema rules and CC-BY-4.0 / MIT attributions |
+| **Phase Review & Build Log** | [`docs/review.md`](docs/review.md) | Complete Phase 00–10 summary, bugs fixed, and verification gates |
+| **Dataset Audit & Credits** | [`reports/assumptions.md`](reports/assumptions.md) · [`docs/CREDITS.md`](docs/CREDITS.md) | Verified ESA schema rules and CC-BY-4.0 / MIT attributions |
 
 ---
 
@@ -271,10 +271,18 @@ NearMiss/
 ├── notebooks/
 │   ├── 01_eda_schema_audit.ipynb   # Raw CDM schema inspection & floor analysis
 │   └── 02_error_analysis.ipynb     # Locked test error drilldowns & SHAP charts
-├── config.yaml                  # Central operational configuration (no magic numbers)
-├── review.md                    # Cumulative phase-by-phase implementation review
-├── CREDITS.md                   # Full prior-art attributions & CC-BY-4.0 licenses
-└── README.md                    # This document
+├── docs/
+│   ├── CREDITS.md                  # Full prior-art attributions & CC-BY-4.0 licenses
+│   ├── review.md                   # Cumulative phase-by-phase implementation review
+│   ├── master_build_plan.md        # Complete project architecture & master plan
+│   ├── GOAL.md                     # Project specification & DoD targets
+│   ├── AGENTS.md                   # Standing rules & build guidelines
+│   ├── tasks/                      # Phase-by-phase specification checklists (00–10)
+│   └── tools/                      # Offline training, calibration & SHAP scripts
+├── config.yaml                     # Central operational configuration (no magic numbers)
+├── pytest.ini                      # Pytest path & discovery configuration
+├── requirements.txt                # Reproducible Python dependency manifest
+└── README.md                       # This document
 ```
 
 ---
@@ -288,7 +296,7 @@ NearMiss was engineered under strict production-grade rules:
 - [x] **No Magic Numbers:** All cutoffs, thresholds, paths, and random seeds read dynamically from `config.yaml`.
 - [x] **Fit on Training Data Only:** All imputers, scalers, and calibrators fitted inside training folds only.
 - [x] **Actionable Metrics:** Never reporting misleading raw accuracy on heavily imbalanced conjunction data (~0.80% base rate); headline metrics are Missed Collisions (FN), Avoidable Burns (FP), Recall, Precision, $F_2$, PR-AUC, and High-Risk MSE.
-- [x] **Attribution:** Clean reimplementation of physical covariance formulas; all papers and datasets fully cited in [CREDITS.md](CREDITS.md).
+- [x] **Attribution:** Clean reimplementation of physical covariance formulas; all papers and datasets fully cited in [docs/CREDITS.md](docs/CREDITS.md).
 
 ---
 

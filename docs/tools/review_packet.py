@@ -42,7 +42,7 @@ def build_packet(
     critical_files: list[str],
     run_pytest: bool = False,
 ) -> str:
-    task_path = Path(f"tasks/phase_{phase:02d}.md")
+    task_path = Path(f"docs/tasks/phase_{phase:02d}.md")
     status_path = Path(f"reports/status/phase_{phase}.md")
 
     sections: list[tuple[str, str, int]] = []
