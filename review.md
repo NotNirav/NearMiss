@@ -261,7 +261,7 @@ This review tracks the implementation of all phases of the **SW5 Satellite Colli
   - **Policy Simulator**: Spacecraft profile presets (`SmallSat`, `Earth Obs`, `Flagship`), interactive threshold slider ($p^*$), risk-weighted miss penalty and burn cost inputs, live FN/FP operational frontier curve, expected financial balance vs Baseline A, and side-by-side confusion matrices.
   - **Benchmarks**: Full-width unclipped ESA Blind Test and 5-Fold Cross-Validation tables, live interactive Plotly **Platt Probability Calibration Reliability** curve (`calibrated_oof.parquet`), two-tone interactive **Global Tree SHAP Feature Drivers** chart, and orbital physics cards.
 - Added automated unit test suite in `tests/test_app.py` validating data loading contracts, split availability, and CDM history split isolation (`test_history_split_isolation`).
-- Verified headless execution, live browser click hit-testing (`blockedCount: 0`), real mouse clicks across all interactive controls, visual screenshots of every view, and strict `read_csv` isolation.
+- Verified headless execution, live browser click hit-testing (`blockedCount: 0`), real mouse clicks across all interactive controls, visual screenshots of every view, live Streamlit Cloud deployment (`https://nearmiss.streamlit.app`), and strict `read_csv` isolation.
 
 ### 2. Tests Passed
 - `tests/test_app.py::test_app_data_loading`: PASSED
@@ -318,5 +318,5 @@ A comprehensive test of the entire NearMiss system was conducted across all 10 p
 2. **Splitting & Group Isolation**: Confirmed that 14,109 events are partitioned into stratified folds and a locked test set with 0 event_id collisions.
 3. **Feature Engineering**: Validated that all 73 trajectory, dynamics, and covariance physics features are invariant to future tracking CDMs.
 4. **Model Training & Platt Calibration**: Confirmed that 5-fold cross-validation and Platt scaling reduce calibration Brier error by 59.5% and tune decision thresholds cleanly.
-5. **Dashboard & User Interface**: Streamlit application compiles cleanly, loads real parquet outputs with split-isolated CDM histories, provides a single unified top navigation bar (no redundant sidebar) with a centered brand mark and live 60fps interactive orbital burn simulator, overlap-free Plotly trajectories with blind-zone reveal, interactive policy/economics simulation, and live Platt calibration & SHAP diagnostics—all visually and interactively verified in Chrome with zero blocked clicks.
+5. **Dashboard & User Interface**: Streamlit application (live at `https://nearmiss.streamlit.app`) compiles cleanly, loads real parquet outputs with split-isolated CDM histories, provides a single unified top navigation bar (no redundant sidebar) with a centered brand mark and live 60fps interactive orbital burn simulator, overlap-free Plotly trajectories with blind-zone reveal, interactive policy/economics simulation, and live Platt calibration & SHAP diagnostics—all visually and interactively verified in Chrome with zero blocked clicks.
 6. **All 20 unit tests passing**: 100% test pass rate with strict cutoff and split isolation.

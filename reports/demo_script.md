@@ -1,11 +1,12 @@
 # NearMiss (SW-5) — 2-Minute Operational Demonstration Script
 
+**Live Deployed App:** [https://nearmiss.streamlit.app](https://nearmiss.streamlit.app) *(Local fallback: `http://localhost:8501`)*  
 **Objective:** Demonstrate autonomous satellite collision risk prediction under strict 48-hour operational cutoff constraints using real European Space Agency (ESA) Conjunction Data Messages.
 
 ---
 
 ### [00:00 - 00:30] 1. The 48-Hour Blind Zone & Live Orbital Simulator
-- **Visual:** Open **Overview** (`http://localhost:8501`). Point to the top navigation bar and the live **Interactive T-48h Orbital Conjunction** canvas on the right.
+- **Visual:** Open **Overview** (`https://nearmiss.streamlit.app`). Point to the top navigation bar and the live **Interactive T-48h Orbital Conjunction** canvas on the right.
 - **Screen Action:**
   - Click **Simulate Avoidance Burn ($\Delta v$)** on the live orbital canvas. Watch the target satellite fire a thruster burn prior to T-48h, smoothly deflecting away from the crimson debris cone (`185 m` → `4,820 m`, status flips from `CONJUNCTION ALERT` to `ORBIT CLEARED`).
 - **Presenter:**

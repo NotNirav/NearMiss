@@ -2,11 +2,53 @@
 ### Autonomous Conjunction Assessment & Maneuver Decision Support Under Operational Cutoff Constraints
 **StarForge Hackathon · Dark Side Software Track (Challenge SW-5)**
 
+[![Live App: nearmiss.streamlit.app](https://img.shields.io/badge/Live_App-nearmiss.streamlit.app-1B4DFF?style=for-the-badge)](https://nearmiss.streamlit.app)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: CC-BY-4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](CREDITS.md)
 [![Tests: 20/20 Passing](https://img.shields.io/badge/tests-20%2F20%20passing-brightgreen.svg)](tests/)
 [![Dataset: ESA Collision Avoidance](https://img.shields.io/badge/dataset-ESA%20Kelvins-orange.svg)](https://zenodo.org/records/4463683)
 [![Cutoff Isolation: Verified](https://img.shields.io/badge/leakage_isolation-verified-success.svg)](src/cutoff.py)
+
+> **Live Interactive Deployment:** **[https://nearmiss.streamlit.app](https://nearmiss.streamlit.app)** — inspect all 14,109 ESA conjunctions, test the 60fps orbital avoidance-burn simulator, and run mission economics in your browser with zero setup.
+
+---
+
+## 🧭 Judge Quick-Access Hub
+
+Everything needed to evaluate **NearMiss** is linked directly below — no folder hunting required:
+
+| What to Inspect | Direct Link | What You Will See |
+| :--- | :--- | :--- |
+| **Live Deployed App** | **[nearmiss.streamlit.app](https://nearmiss.streamlit.app)** | Full 4-view flight operations console + live 60fps $\Delta v$ orbital burn simulator |
+| **60-Second Guided Demo** | **[In-Page Walkthrough](#-60-second-judge-walkthrough)** · [`reports/demo_script.md`](reports/demo_script.md) | 5 exact clicks covering rescued collisions (`#873`), saved burns (`#560`), and `$5.15M` ROI |
+| **Full Benchmark Tables** | **[Key Results](#-key-benchmark-results)** · [`reports/results.md`](reports/results.md) | Out-of-fold CV (8,293 events) + Locked ESA Blind Test (2,167 events, 150 high-risk) |
+| **Anti-Leakage & Cutoff Proof** | [`src/cutoff.py`](src/cutoff.py) · [`tests/test_no_leakage.py`](tests/test_no_leakage.py) | Hard `time_to_tca >= 2.0d` barrier + 20/20 automated zero-leakage tests |
+| **Error Analysis & SHAP** | [`notebooks/02_error_analysis.ipynb`](notebooks/02_error_analysis.ipynb) · [`shap_importance.png`](reports/figures/shap_importance.png) | Blind test error drilldowns + physical covariance drivers |
+| **Phase Review & Build Log** | [`review.md`](review.md) | Complete Phase 00–10 summary, bugs fixed, and verification gates |
+| **Dataset Audit & Credits** | [`reports/assumptions.md`](reports/assumptions.md) · [`CREDITS.md`](CREDITS.md) | Verified ESA schema rules and CC-BY-4.0 / MIT attributions |
+
+---
+
+## 🌟 Where NearMiss Stands Out
+
+1. **True Zero-Leakage T-48h Cutoff Engineering:** Most conjunction models accidentally leak post-cutoff radar updates. NearMiss enforces hard architectural isolation: only [`src/load.py`](src/load.py) touches raw CSVs, [`src/cutoff.py`](src/cutoff.py) purges every CDM inside 2.0 days to TCA, and [`tests/test_no_leakage.py`](tests/test_no_leakage.py) proves **0% temporal or `event_id` overlap** across all 5 folds and the locked test set (**20/20 tests passing**).
+2. **73 Orbital Covariance Physics Features (Beyond Generic Tabular ML):** Rather than treating CDMs as flat rows, [`src/features.py`](src/features.py) computes 3D positional uncertainty ellipsoid volumes ($\sqrt{\det(C)}$), pass-over-pass volume contraction ratios, combined target+chaser RTN sigmas, and miss-distance velocity gradients.
+3. **Calibrated Probabilities & Radar Re-Tasking Tiers (`-59.5%` Brier Error):** Out-of-fold Platt scaling lowers Brier calibration error from `0.01724 → 0.00698` (filtered cohort: `0.01662 → 0.00680`) and assigns **`HIGH` / `MEDIUM` / `LOW` Confidence Tiers** so borderline geometry triggers targeted radar re-tasking instead of blind guesses.
+4. **Multi-Cutoff Augmentation & Two-Stage Hurdle Regression:** Classifiers train across multiple lead horizons (`[2.0, 2.5, 3.0]` days) strictly inside each training fold, while a two-stage conditional LightGBM regressor separates the `-30.0` numerical floor from active risk—cutting locked-test **High-Risk MSE from `156.42` down to `133.79`** (improving Kelvins score from `213.50` to `190.30`).
+5. **Honest Blind Competition Gains (No Accuracy Gimmicks):** On the 2,167 held-out ESA Competition Test events (150 high-risk), NearMiss **eliminated 12 unnecessary fuel burns** commanded by Persistence, **rescued 3 late-jumping collisions** falsely cleared as nominal (Events `#193`, `#735`, `#873`), and reaches **80.7% recall** and **$F_2 = 0.759$** (`USD +5,145,000` balance vs Baseline A) when tuned in the Policy Simulator.
+6. **Built for Flight Dynamics Operators, Live in Production:** Deployed at **[nearmiss.streamlit.app](https://nearmiss.streamlit.app)** with a 60fps interactive $\Delta v$ orbital burn simulator, split-isolated CDM trajectories, post-cutoff **Blind-Zone Reveal**, and a live cost-sensitivity frontier.
+
+---
+
+## ⚡ 60-Second Judge Walkthrough
+
+Experience the full system on **[https://nearmiss.streamlit.app](https://nearmiss.streamlit.app)** in 5 quick steps:
+
+1. **Simulate an Avoidance Burn (Overview Hero):** Click **`Simulate Avoidance Burn (Δv)`** on the live orbital conjunction canvas—watch the target satellite deflect clear of the crimson debris cone (`185 m → 4,820 m`, status flips from `CONJUNCTION ALERT` to `ORBIT CLEARED`).
+2. **Audit a Rescued Collision (`#873`):** Switch the top-bar cohort pill to **`Blind Test (2,167)`** → open **`Event Inspector`** → click **`Caught Collision #873`** → toggle **`Reveal post-cutoff outcome (Blind Zone)`**. Baseline A stood down at `-6.01`; NearMiss commanded a burn before risk crossed into impact territory at `-5.89`.
+3. **Inspect an Avoided Fuel Burn (`#560`):** Click **`Saved Fuel Burn #560`** → toggle **`Reveal post-cutoff outcome`**. Baseline A ordered a costly maneuver at `-3.73`; NearMiss cleared the pass as risk dropped to `-26.17`.
+4. **Tune Mission Economics (`Policy Simulator`):** Switch **Spacecraft Profile** to **`Earth Obs`** ($p^* = 0.015$) to see Recall jump to **80.7%**, **$F_2 = 0.759$** (beating Baseline A's `0.739`), and expected mission savings reach **`USD +5,145,000`** on the live frontier & confusion matrices.
+5. **Verify Calibration & SHAP Drivers (`Benchmarks`):** Inspect the full-width ESA tables alongside the live interactive **Platt Calibration Reliability** curve and **Tree SHAP Feature Drivers** chart.
 
 ---
 
@@ -123,6 +165,8 @@ Uncalibrated tree ensembles produce raw scores distorted by class balancing. Nea
 
 ## 🖥️ Operations Console Walkthrough
 
+**Live App:** **[https://nearmiss.streamlit.app](https://nearmiss.streamlit.app)**
+
 The Streamlit web application ([`app/streamlit_app.py`](app/streamlit_app.py)) uses a high-clarity **Optical Aerospace Light** design system (`#F4F6FA` architectural canvas, `#FFFFFF` instrument surfaces, `#1B4DFF` Aerospace Cobalt accent, and strictly semantic `#D92D20` crimson / `#067647` emerald statuses) with a single unified full-width top navigation bar (no redundant sidebar) and global cohort switcher (`Validation (2,389)` ↔ `Blind Test (2,167)`).
 
 ### 1. Overview (Mission Briefing & Interactive Simulator)
@@ -182,7 +226,9 @@ All **20 automated tests** execute in ~6 seconds, validating cutoff isolation, z
 pytest -v
 ```
 
-### 3. Launch Operations Console
+### 3. Open or Launch Operations Console
+- **Instant Hosted Access:** Visit **[https://nearmiss.streamlit.app](https://nearmiss.streamlit.app)**
+- **Run Locally:**
 ```bash
 streamlit run app/streamlit_app.py
 ```
