@@ -165,6 +165,43 @@ section[data-testid="stSidebar"],
     padding: 1.15rem 1.35rem !important;
     box-shadow: var(--shadow-sm) !important;
 }
+[class*="st-key-card_sim_ctrl"] {
+    gap: 0.65rem !important;
+}
+[class*="st-key-card_sim_ctrl"] [data-testid="stMarkdownContainer"] {
+    margin-bottom: 0 !important;
+}
+[class*="st-key-card_sim_ctrl"] [data-testid="stNumberInputContainer"] {
+    background-color: #F8FAFC !important;
+    border: 1px solid #CBD5E1 !important;
+    border-radius: 8px !important;
+}
+.sim-sec-sep {
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    margin-top: 2px;
+}
+.sim-field-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0;
+}
+.sim-field-lbl {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--ink-1);
+}
+.sim-field-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--cobalt);
+    background: var(--cobalt-tint);
+    border: 1px solid var(--cobalt-border);
+    border-radius: 6px;
+    padding: 2px 8px;
+}
 [class*="st-key-navbar_shell"] {
     background-color: var(--surface) !important;
     border: 1px solid var(--line) !important;
@@ -1841,29 +1878,38 @@ def render_simulator(split_preds: pd.DataFrame) -> None:
 
             if preset == "SmallSat":
                 default_miss_penalty, default_burn_val, default_th = 250_000, 15_000, 0.020
-                profile_note = "Commercial LEO SmallSat — USD 250k miss penalty / USD 15k burn."
             elif preset == "Earth Obs":
                 default_miss_penalty, default_burn_val, default_th = 1_000_000, 45_000, 0.015
-                profile_note = "Flagship Earth Observation — USD 1M miss penalty / USD 45k burn."
             else:
                 default_miss_penalty, default_burn_val, default_th = 5_000_000, 100_000, 0.010
-                profile_note = "High-Value Infrastructure — USD 5M miss penalty / USD 100k burn."
 
-            st.markdown(f"<div style='font-size:0.8rem; color:#64748B; margin-bottom:8px;'>{profile_note}</div>", unsafe_allow_html=True)
-
+            cur_th = float(st.session_state.get(f"sim_th_{preset}", default_th))
+            st.markdown(
+                f"""
+<div class='sim-field-row sim-sec-sep'>
+    <span class='sim-field-lbl'>Maneuver Trigger (p*)</span>
+    <span class='sim-field-val'>P ≥ {cur_th:.1%}</span>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
             sim_th = st.slider(
-                "Maneuver Trigger Threshold (p*)",
+                "Maneuver Trigger (p*)",
                 min_value=0.005,
                 max_value=0.250,
                 value=default_th,
                 step=0.005,
                 format="%.3f",
+                label_visibility="collapsed",
                 key=f"sim_th_{preset}",
             )
-            st.caption(f"Trigger a burn whenever calibrated P(collision) ≥ {sim_th:.1%}.")
 
-            cost_collision = st.number_input("Risk-Weighted Miss Penalty (USD)", value=default_miss_penalty, step=50_000, key=f"cc_{preset}")
-            cost_manoeuvre = st.number_input("Avoidance Burn Cost (USD)", value=default_burn_val, step=5_000, key=f"cm_{preset}")
+            st.markdown(
+                "<div class='sim-field-lbl sim-sec-sep'>Cost Assumptions (USD)</div>",
+                unsafe_allow_html=True,
+            )
+            cost_collision = st.number_input("Miss Penalty", value=default_miss_penalty, step=50_000, key=f"cc_{preset}")
+            cost_manoeuvre = st.number_input("Avoidance Burn", value=default_burn_val, step=5_000, key=f"cm_{preset}")
 
             sim_pred_bin = (split_preds["high_risk_prob"] >= sim_th).astype(int)
             y_eval_true = split_preds["actual_high_risk"].values
@@ -1882,10 +1928,10 @@ def render_simulator(split_preds: pd.DataFrame) -> None:
             sav_fg = "#067647" if savings >= 0 else "#D92D20"
             st.markdown(
                 f"""
-<div style='background:{sav_bg}; border:1px solid {sav_bd}; border-radius:10px; padding:14px 16px; margin-top:10px;'>
+<div style='background:{sav_bg}; border:1px solid {sav_bd}; border-radius:10px; padding:14px 16px; margin-top:8px;'>
     <div style='font-size:0.76rem; font-weight:500; color:#475569;'>Expected Financial Balance vs Baseline A</div>
     <div class='mono' style='font-size:1.52rem; font-weight:600; color:{sav_fg}; margin:3px 0;'>USD {savings:+,.0f}</div>
-    <div style='font-size:0.79rem; color:#475569;'>{savings_pct:+.1f}% mission cost change at p* = {sim_th:.3f}.</div>
+    <div style='font-size:0.79rem; color:#475569;'>{savings_pct:+.1f}% cost delta at p* = {sim_th:.3f}.</div>
 </div>
 """,
                 unsafe_allow_html=True,
